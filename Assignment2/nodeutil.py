@@ -1,24 +1,43 @@
-import socket
 import threading
+from xmlrpc.server import SimpleXMLRPCServer
+
+def consistent_hash(x):
+	return hash(x) & ((1<<32)-1)
 
 class Node :
 
-	def __init__(self,nodeId,port,hostname,predecessor,successor,lengthOfRing):
-		
-		self.nodeId = nodeId
+	def __init__(self,host, port):
 		self.port = port
-		self.hostname = hostname
-		self.predecessor = predecessor
-		self.successor = successor
-		self.lengthOfRing = lengthOfRing
+		self.host = host
 		self.finger = []
-		self.endpoint = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-		self.endpoint.bind((self.hostname,self.port))
+		self.server = SimpleXMLRPCServer((self.host, self.port))
+		print("Starting rpc server on port "+str(self.port)+"...")
+		self.server.register_function(self.join, "join")
+		self.server.register_function(self.join_done, "join_done")
+		self.server.register_function(self.find_node, "find_node")
+		self.server.register_function(self.insert, "insert")
+		self.server.register_function(self.lookup, "lookup")
+		self.server.register_function(self.printFingerTable, "printFingerTable")
+		self.server_thread = threading.Thread(target=self.server.serve_forever)
+		self.server_thread.start()
+		self.server_thread.join()
 
-	def join(self,nodeIdInTargetRing):
 
+	# rpc methods
+	def join(self,url):
 		self.predecessor = None 
-		self.successor = nodeIdInTargetRing.find_successor(self)
+		# self.successor = nodeIdInTargetRing.find_successor(self)
+	def join_done(self, url):
+		pass
+	def find_node(self, key, traceFlag):
+		return "I am node " +  str(consistent_hash("http://"+self.host+":"+str(self.port)))
+	def insert(self, word):
+		pass
+	def lookup(self, word):
+		pass
+	def printFingerTable(self):
+		pass
+
 
 	def find_successor(self,targetNode) :
 		
@@ -74,6 +93,5 @@ class Node :
 
 
 
-
-			
-
+if __name__ == "__main__":
+	node = Node("localhost",8000)
