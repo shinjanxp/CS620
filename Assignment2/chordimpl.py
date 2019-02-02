@@ -97,7 +97,7 @@ def insert(word):
 def lookup(word):
 	pass
 
-# TO-DO : Implement Print Finger Table
+# TO-DO : Implement Print Finger Tables
 def printFingerTable():
 	pass
 
