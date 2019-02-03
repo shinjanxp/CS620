@@ -35,6 +35,7 @@ class Node :
 		print("Starting rpc server on port "+str(self.port)+"...")
 		self.node_id = consistent_hash(self.url)
 		print("I am node " + str(self.node_id))
+		self.data = {}
 
 		# register rpcs
 		self.server.register_function(self.join, "join")
@@ -104,6 +105,7 @@ class Node :
 	def join_done(self, url):
 		self.join_lock = False
 		return True
+
 	def find_successor(self, key, traceFlag=False): # returns url of successor of key
 		if is_in_interval(key, self.node_id+1, consistent_hash(self.successor)):
 			return self.successor
@@ -113,10 +115,19 @@ class Node :
 			with xmlrpc.client.ServerProxy(n_prime) as proxy:
 				return proxy.find_successor(key)
 		pass
+
 	def insert(self, word):
-		pass
+		key = word.strip().split(':')[0]
+		meaning = word.strip().split(':')[1]
+		self.data[key] = meaning
+		print('Current Dictionary : ',self.data)
+		return True
+		
+
 	def lookup(self, word):
-		pass
+		return self.data[word]
+		
+
 	def printFingerTable(self):
 		pass
 	def get_predecessor(self):

@@ -74,6 +74,7 @@ def join(url) :
 				join_done(url)
 				return newNode
 			else :
+				print('Here')
 				with xmlrpc.client.ServerProxy(node.successor) as proxy :
 					newNode = proxy.join(nodeURL)
 					join_done(url)
@@ -111,15 +112,23 @@ if __name__ == '__main__':
 
 	server = SimpleXMLRPCServer((nodeHost,nodePort))
 
-	if nodeId == 'node-0' :
-		server.register_function(join,'join')
-		server.register_function(join_done,'join_done')
-		server.serve_forever()
+	server.register_function(join,'join')
+	server.register_function(join_done,'join_done')
+	listener = threading.Thread(target=server.serve_forever)
+	listener.start()	
 
-	else :
+	# if nodeId == 'node-0' :
+	# 	server.register_function(join,'join')
+	# 	server.register_function(join_done,'join_done')
+	# 	server.serve_forever()
+
+	if nodeId != 'node-0' :
 		targetURL = input('Please enter target URL : ')
 		with xmlrpc.client.ServerProxy(targetURL) as proxy :
 			node.unwrap(proxy.join(nodeURL))
 			print('Successor of Node ',nodeId,': ',node.successor)
 			print('Predecessor of Node ',nodeId,': ',node.successor)
-			
+
+
+
+	listener.join()		
