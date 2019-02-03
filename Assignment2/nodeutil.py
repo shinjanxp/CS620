@@ -1,13 +1,15 @@
 import threading, sys, time, xmlrpc.client
 from xmlrpc.server import SimpleXMLRPCServer
-FINGER_TABLE_SIZE = 32
+FINGER_TABLE_SIZE = 16
 
 
 def consistent_hash(x):
 	# return hash(x) & ((1<<32)-1)
-	return int(hash(x) & ((1<<32)-1))
+	return int(hash(x) & ((1<<16)-1))
 
 def is_in_interval(value, start, end):
+	if not value:
+		return False
 	if start < end:
 		if value >= start and value <= end:
 			return True
@@ -28,7 +30,7 @@ class Node :
 		self.host = host
 		self.url = "http://" + self.host + ":" + str(self.port)
 		self.finger = []
-		self.next = 1
+		self.next = 0
 		self.server = SimpleXMLRPCServer((self.host, self.port))
 		print("Starting rpc server on port "+str(self.port)+"...")
 		self.node_id = consistent_hash(self.url)
@@ -42,26 +44,45 @@ class Node :
 		self.server.register_function(self.lookup, "lookup")
 		self.server.register_function(self.printFingerTable, "printFingerTable")
 		self.server.register_function(self.get_predecessor, "get_predecessor")
+		self.server.register_function(self.notify, "notify")
+		self.server.register_function(self.stabilize, "stabilize")
+		self.server.register_function(self.fix_fingers, "fix_fingers")
 		# RPC thread
 		self.server_thread = threading.Thread(target=self.server.serve_forever)
 		self.server_thread.start()
+		
+		if node_0_url:
+			while True:
+				with xmlrpc.client.ServerProxy(node_0_url) as proxy:
+					success, self.successor, self.predecessor, self.finger = proxy.join(self.url)
+					if success == 404:
+						time.sleep(5)
+						continue
+					print(self.successor, self.predecessor, self.finger)
+					self.stabilize()
+					proxy.stabilize()
+					self.fix_fingers()
+					proxy.fix_fingers()
+					proxy.join_done(self.url)
+					break
+		else :
+			self.create()
+
+
 
 		# Fix finger table thread
 		self.refresh_thread = threading.Thread(target=self.refresh)
 		self.refresh_thread.start()
 
-		if node_0_url:
-			with xmlrpc.client.ServerProxy(node_0_url) as proxy:
-				self.node_id, self.successor, self.predecessor, self.finger = proxy.join(self.url)
-				print(self.node_id, self.successor, self.predecessor, self.finger)
-		else :
-			self.create()
 		self.server_thread.join()
 
 
 	# RPC definitions
 
 	def join(self,url): # to be invoked at node-0 by all joining nodes
+		if self.join_lock:
+			return (404, False, False, False)
+		self.join_lock = True
 		print("join request received from " + url)
 		# self.predecessor = None 
 		# with xmlrpc.client.ServerProxy(url) as proxy:
@@ -69,10 +90,15 @@ class Node :
 		# self.finger = [self.successor] * FINGER_TABLE_SIZE
 		assigned_key = consistent_hash(url)
 		successor = self.find_successor(assigned_key)
-		return (assigned_key, successor, False, [successor]*FINGER_TABLE_SIZE,)
+		# If I am my successor then I am the only node in the N/W now. set the new node to my successor.
+		if self.successor == self.url:
+			self.successor = url 
+			self.finger[0] = self.successor
+		return ( 200, successor, False, [successor]+ [False]*(FINGER_TABLE_SIZE-1),)
 
 	def join_done(self, url):
-		pass
+		self.join_lock = False
+		return True
 	def find_successor(self, key, traceFlag=False): # returns url of successor of key
 		if is_in_interval(key, self.node_id+1, consistent_hash(self.successor)):
 			return self.successor
@@ -91,8 +117,10 @@ class Node :
 	def get_predecessor(self):
 		return self.predecessor
 	def notify(self, n_prime):
-		if not self.predecessor	or is_in_interval(n_prime, consistent_hash(self.predecessor)+1, self.node_id-1):
+		if not self.predecessor	or is_in_interval(consistent_hash(n_prime), consistent_hash(self.predecessor)+1, self.node_id-1):
 			self.predecessor = n_prime
+		print("Predecessor: ", self.predecessor)
+		return True
 
 	# End RPC definitions
 
@@ -100,8 +128,8 @@ class Node :
 		self.node_id = consistent_hash(self.url)
 		self.predecessor = False
 		self.successor = self.url
-		self.finger = [self.successor] * FINGER_TABLE_SIZE
-
+		self.finger = [self.successor] + [False] * (FINGER_TABLE_SIZE-1)
+		self.join_lock = False
 
 	def closest_preceding_node(self,key) : # returns url of closest preceding node to key
 		for entry in reversed(self.finger):
@@ -111,23 +139,36 @@ class Node :
 		return self.url
 
 	def stabilize(self):
-		x= None
+		x = None
 		with xmlrpc.client.ServerProxy(self.successor) as proxy:
 			x = proxy.get_predecessor()
+
 		if is_in_interval(consistent_hash(x), self.node_id+1, consistent_hash(self.successor)-1):
 			self.successor = x
+			self.finger[0] = self.successor
 		with xmlrpc.client.ServerProxy(self.successor) as proxy:
-			x = proxy.notify(self.url)
+			proxy.notify(self.url)
+		print ("Successor: ", self.successor)
+		print ("Predecessor: ", self.predecessor)
+		return True
 
 	def fix_fingers(self):
-		self.next = self.next +1
-		if self.next > FINGER_TABLE_SIZE:
-			self.next = 1
-		self.finger[next] = self.find_successor(self.node_id + 2**(self.next - 1))		
+		for entry in self.finger:
+			self.next = self.next +1
+			if self.next > FINGER_TABLE_SIZE:
+				self.next = 1
+			self.finger[self.next-1] = self.find_successor(self.node_id + 2**(self.next - 1))	
+		print (self.finger)
+		return True	
 
 	def refresh(self):
-		self.fix_fingers()
-		time.sleep(10)
+		while True:
+			# self.stabilize()
+			# time.sleep(1)
+			self.fix_fingers()
+			print (self.finger)
+			print("-----------------------------------------------------------------------------------------")
+			time.sleep(10)
 
 if __name__ == "__main__":
 	if len(sys.argv) < 3:
