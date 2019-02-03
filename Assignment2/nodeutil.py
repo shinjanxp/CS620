@@ -1,97 +1,142 @@
-import threading
+import threading, sys, time, xmlrpc.client
 from xmlrpc.server import SimpleXMLRPCServer
+FINGER_TABLE_SIZE = 32
+
 
 def consistent_hash(x):
-	return hash(x) & ((1<<32)-1)
+	# return hash(x) & ((1<<32)-1)
+	return int(hash(x) & ((1<<32)-1))
+
+def is_in_interval(value, start, end):
+	if start < end:
+		if value >= start and value <= end:
+			return True
+		else:
+			return False
+	elif start > end:
+		if value > end and value < start:
+			return False
+		else:
+			return True
+	else:
+		return True
 
 class Node :
 
-	def __init__(self,host, port):
+	def __init__(self,host, port, node_0_url=None):
 		self.port = port
 		self.host = host
+		self.url = "http://" + self.host + ":" + str(self.port)
 		self.finger = []
+		self.next = 1
 		self.server = SimpleXMLRPCServer((self.host, self.port))
 		print("Starting rpc server on port "+str(self.port)+"...")
+		self.node_id = consistent_hash(self.url)
+		print("I am node " + str(self.node_id))
+
+		# register rpcs
 		self.server.register_function(self.join, "join")
 		self.server.register_function(self.join_done, "join_done")
-		self.server.register_function(self.find_node, "find_node")
+		self.server.register_function(self.find_successor, "find_successor")
 		self.server.register_function(self.insert, "insert")
 		self.server.register_function(self.lookup, "lookup")
 		self.server.register_function(self.printFingerTable, "printFingerTable")
+		self.server.register_function(self.get_predecessor, "get_predecessor")
+		# RPC thread
 		self.server_thread = threading.Thread(target=self.server.serve_forever)
 		self.server_thread.start()
+
+		# Fix finger table thread
+		self.refresh_thread = threading.Thread(target=self.refresh)
+		self.refresh_thread.start()
+
+		if node_0_url:
+			with xmlrpc.client.ServerProxy(node_0_url) as proxy:
+				self.node_id, self.successor, self.predecessor, self.finger = proxy.join(self.url)
+				print(self.node_id, self.successor, self.predecessor, self.finger)
+		else :
+			self.create()
 		self.server_thread.join()
 
 
-	# rpc methods
-	def join(self,url):
-		self.predecessor = None 
-		# self.successor = nodeIdInTargetRing.find_successor(self)
+	# RPC definitions
+
+	def join(self,url): # to be invoked at node-0 by all joining nodes
+		print("join request received from " + url)
+		# self.predecessor = None 
+		# with xmlrpc.client.ServerProxy(url) as proxy:
+		# 	self.successor = proxy.find_successor(self.node_id)
+		# self.finger = [self.successor] * FINGER_TABLE_SIZE
+		assigned_key = consistent_hash(url)
+		successor = self.find_successor(assigned_key)
+		return (assigned_key, successor, False, [successor]*FINGER_TABLE_SIZE,)
+
 	def join_done(self, url):
 		pass
-	def find_node(self, key, traceFlag):
-		return "I am node " +  str(consistent_hash("http://"+self.host+":"+str(self.port)))
+	def find_successor(self, key, traceFlag=False): # returns url of successor of key
+		if is_in_interval(key, self.node_id+1, consistent_hash(self.successor)):
+			return self.successor
+		else:
+			n_prime = self.closest_preceding_node(key) 
+
+			with xmlrpc.client.ServerProxy(n_prime) as proxy:
+				return proxy.find_successor(key)
+		pass
 	def insert(self, word):
 		pass
 	def lookup(self, word):
 		pass
 	def printFingerTable(self):
 		pass
+	def get_predecessor(self):
+		return self.predecessor
+	def notify(self, n_prime):
+		if not self.predecessor	or is_in_interval(n_prime, consistent_hash(self.predecessor)+1, self.node_id-1):
+			self.predecessor = n_prime
+
+	# End RPC definitions
+
+	def create(self):
+		self.node_id = consistent_hash(self.url)
+		self.predecessor = False
+		self.successor = self.url
+		self.finger = [self.successor] * FINGER_TABLE_SIZE
 
 
-	def find_successor(self,targetNode) :
-		
-		if targetNode.nodeId > self.nodeId and targetNode.nodeId <= self.successor.nodeId :
-			return self.successor.nodeId
+	def closest_preceding_node(self,key) : # returns url of closest preceding node to key
+		for entry in reversed(self.finger):
+			# if consistent_hash(entry) > self.node_id and consistent_hash(entry) < key:
+			if is_in_interval(consistent_hash(entry), self.node_id+1, key-1):
+				return entry
+		return self.url
 
-		else :
-			checkpoint = closest_preceding_node(targetNode)
-			return checkpoint.find_successor(targetNode)
-
-	def find_successor_by_value(self,targetId) :
-		
-		if targetId > self.nodeId and targetId <= self.successor.nodeId :
-			return self.successor.nodeId
-
-		else :
-			checkpoint = closest_preceding_node(targetId)
-			return checkpoint.find_successor_by_value(targetId)
-
-
-	def closest_preceding_node(self,targetNode) :
-
-		for i in range(self.lengthOfRing - 1 , -1 , -1) :
-			if self.finger[i] > self.id and self.finger[i] < targetNode.nodeId :
-				return 	self.finger[i]
-		return self.nodeId
-
-	def closest_preceding_node_ny_value(self,targetId) :
-
-		for i in range(self.lengthOfRing - 1 , -1 , -1) :
-			if self.finger[i] > self.id and self.finger[i] < targetId :
-				return 	self.finger[i]
-		return self.nodeId
-
-	# Needs	to be called periodically
 	def stabilize(self):
-
-		x = self.successor.predecessor
-		if x > self.nodeId and x < self.successor.nodeId :
+		x= None
+		with xmlrpc.client.ServerProxy(self.successor) as proxy:
+			x = proxy.get_predecessor()
+		if is_in_interval(consistent_hash(x), self.node_id+1, consistent_hash(self.successor)-1):
 			self.successor = x
-		successor.notify(self)
+		with xmlrpc.client.ServerProxy(self.successor) as proxy:
+			x = proxy.notify(self.url)
 
-	def notify(self,targetNode):
-
-		if self.predecessor == None or (targetNode.nodeId > self.predecessor.nodeId and targetNode.nodeId < self.nodeId) :
-			self.predecessor = targetNode.nodeId
-
-	
-	# Needs to be called periodically
 	def fix_fingers(self):
-		for i in range(0,self.lengthOfRing) :
-			finger[i] = self.find_successor_by_value(self.nodeId+2**i)
+		self.next = self.next +1
+		if self.next > FINGER_TABLE_SIZE:
+			self.next = 1
+		self.finger[next] = self.find_successor(self.node_id + 2**(self.next - 1))		
 
-
+	def refresh(self):
+		self.fix_fingers()
+		time.sleep(10)
 
 if __name__ == "__main__":
-	node = Node("localhost",8000)
+	if len(sys.argv) < 3:
+		print("Not enough arguments. Syntax: python3 nodeutil.py <host> <port> <node-0 url, leave blank if this is node-0>")
+		sys.exit()
+	host = sys.argv[1]
+	port = sys.argv[2]
+
+	if len(sys.argv) >=4:
+		node = Node(host, int(port), sys.argv[3])
+	else:
+		node = Node(host, int(port))
