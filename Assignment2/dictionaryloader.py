@@ -11,7 +11,7 @@ if __name__ == '__main__' :
 		sys.exit(1)
 
 	else :
-		# try:
+		try:
 			url = sys.argv[1]
 			dictFile = sys.argv[2]
 			with xmlrpc.client.ServerProxy(url) as proxy :
@@ -20,6 +20,6 @@ if __name__ == '__main__' :
 						targetUrl = proxy.find_successor(consistent_hash(line.strip().split(':')[0]))
 						with xmlrpc.client.ServerProxy(targetUrl) as targetproxy :
 							targetproxy.insert(line)
-		# except:
-		# 	print('Wrong inputs are supplied')	
-		# 	print('Usage : python3 dictionaryloader.py <chord-node-url> <path-to-dictionary-file>')
+		except:
+		 	print('Wrong inputs are supplied')	
+		 	print('Usage : python3 dictionaryloader.py <chord-node-url> <path-to-dictionary-file>')

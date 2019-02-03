@@ -11,7 +11,7 @@ if __name__ == '__main__' :
 		sys.exit(1)
 
 	else :
-		# try:
+		try:
 			url = sys.argv[1]
 			while True:
 				choice = int(input('Enter 1 to do lookup , 2 to exit : '))
@@ -26,6 +26,6 @@ if __name__ == '__main__' :
 				else :
 					print('Exiting...')
 					break
-		# except:
-		# 	print('Wrong inputs are supplied')	
-		# 	print('Usage : python3 dictionaryloader.py <chord-node-url>')
+		except:
+		 	print('Wrong inputs are supplied')	
+		 	print('Usage : python3 dictionaryloader.py <chord-node-url>')
