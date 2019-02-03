@@ -1,5 +1,7 @@
 import threading, sys, time, xmlrpc.client
 from xmlrpc.server import SimpleXMLRPCServer
+import datetime
+
 FINGER_TABLE_SIZE = 16
 
 
@@ -59,10 +61,10 @@ class Node :
 					if success == 404:
 						time.sleep(5)
 						continue
-					print(self.successor, self.predecessor, self.finger)
+					self.log_local(""+self.successor + "" + str(self.predecessor) + str(self.finger))
 
 				self.stabilize()
-				print("After stabilize, pre, succ: ", self.predecessor, self.successor)
+				self.log_local("After stabilize, pre, succ: " + str(self.predecessor) + self.successor)
 				if self.predecessor:
 					with xmlrpc.client.ServerProxy(self.predecessor) as proxy:
 						proxy.stabilize()
@@ -89,7 +91,7 @@ class Node :
 		if self.join_lock:
 			return (404, False, False, False)
 		self.join_lock = True
-		print("join request received from " + url)
+		self.log_local("join request received from " + url)
 		# self.predecessor = None 
 		# with xmlrpc.client.ServerProxy(url) as proxy:
 		# 	self.successor = proxy.find_successor(self.node_id)
@@ -108,11 +110,15 @@ class Node :
 
 	def find_successor(self, key, traceFlag=False): # returns url of successor of key
 		if is_in_interval(key, self.node_id+1, consistent_hash(self.successor)):
+			self.log_local("Successor found " + self.successor)
+			self.log_common("Successor found " + self.successor)
 			return self.successor
 		else:
 			n_prime = self.closest_preceding_node(key) 
 
 			with xmlrpc.client.ServerProxy(n_prime) as proxy:
+				self.log_local("Executing find_successor on "+ n_prime)
+				self.log_common("Executing find_successor on "+ n_prime)
 				return proxy.find_successor(key)
 		pass
 
@@ -120,7 +126,7 @@ class Node :
 		key = word.strip().split(':')[0]
 		meaning = word.strip().split(':')[1]
 		self.data[key] = meaning
-		print('Current Dictionary : ',self.data)
+		self.log_local('Current Dictionary : ' + str(self.data))
 		return True
 		
 
@@ -164,8 +170,8 @@ class Node :
 			self.finger[0] = self.successor
 		with xmlrpc.client.ServerProxy(self.successor) as proxy:
 			proxy.notify(self.url)
-		print ("Successor: ", self.successor)
-		print ("Predecessor: ", self.predecessor)
+		self.log_local("Successor: "+ str(self.successor))
+		self.log_local("Predecessor: "+ str(self.predecessor))
 		return True
 
 	def fix_fingers(self):
@@ -185,6 +191,21 @@ class Node :
 			print (self.finger)
 			print("-----------------------------------------------------------------------------------------")
 			time.sleep(10)
+
+	# Loggers
+	def log_common(self, message):
+		logger = open("logs/common_logs.txt","a")
+		now = datetime.datetime.now()
+		
+		logger.write(now.isoformat() + ":  ["+ self.url +" ("+ str(self.node_id) +")] " + message+"\n")
+		logger.close()
+
+	def log_local(self, message):
+		logger = open("logs/"+ self.host + "_" + str(self.port) +"_logs.txt","a")
+		now = datetime.datetime.now()
+		logger.write(now.isoformat() + ":  ["+ self.url +" ("+ str(self.node_id) +")] " + message+"\n")
+		logger.close()
+
 
 if __name__ == "__main__":
 	if len(sys.argv) < 3:

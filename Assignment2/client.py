@@ -7,7 +7,7 @@ def consistent_hash(x):
 if __name__ == '__main__' :
 
 	if len(sys.argv) != 2 :
-		print('Usage : python3 client.py <chord-node-url>')
+		print('Usage : PYTHONHASHSEED=0 python3 client.py <chord-node-url>')
 		sys.exit(1)
 
 	else :

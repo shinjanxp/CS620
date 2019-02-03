@@ -7,7 +7,7 @@ def consistent_hash(x):
 if __name__ == '__main__' :
 
 	if len(sys.argv) != 3 :
-		print('Usage : python3 dictionaryloader.py <chord-node-url> <path-to-dictionary-file>')
+		print('Usage : PYTHONHASHSEED=0 python3 dictionaryloader.py <chord-node-url> <path-to-dictionary-file>')
 		sys.exit(1)
 
 	else :
