@@ -59,12 +59,17 @@ class Node :
 						time.sleep(5)
 						continue
 					print(self.successor, self.predecessor, self.finger)
-					self.stabilize()
-					proxy.stabilize()
-					self.fix_fingers()
-					proxy.fix_fingers()
+
+				self.stabilize()
+				print("After stabilize, pre, succ: ", self.predecessor, self.successor)
+				if self.predecessor:
+					with xmlrpc.client.ServerProxy(self.predecessor) as proxy:
+						proxy.stabilize()
+
+				self.fix_fingers()
+				with xmlrpc.client.ServerProxy(node_0_url) as proxy:
 					proxy.join_done(self.url)
-					break
+				break
 		else :
 			self.create()
 
@@ -163,8 +168,8 @@ class Node :
 
 	def refresh(self):
 		while True:
-			# self.stabilize()
-			# time.sleep(1)
+			self.stabilize()
+			time.sleep(1)
 			self.fix_fingers()
 			print (self.finger)
 			print("-----------------------------------------------------------------------------------------")
