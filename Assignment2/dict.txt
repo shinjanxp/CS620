@@ -1,0 +1,5 @@
+van:excellent tool for kidnapping
+man:social animal
+apple:fruit
+orange:color
+iphone:some overrated phone
