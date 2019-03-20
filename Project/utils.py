@@ -29,7 +29,12 @@ def assignStake():
 # For testing Purpose Only
 
 if __name__ == '__main__' :
-    print(generateKeys())  # Private keys in ECDSA are integers while Public Key are points on curve
+    priv_key,pub_key = generateKeys()  # Private keys in ECDSA are integers while Public Key are points on curve
+    l = signMessage('Extremers',priv_key)
+    print(verifySignature(l[0],l[1],'Extremers',pub_key))
+    print(verifySignature(l[0],l[1],'Extremerso',pub_key))
+    priv_key,pub_key = generateKeys()
+    print(verifySignature(l[0],l[1],'Extremers',pub_key))
     print(generateNumberOfNeighbors())
 
 
