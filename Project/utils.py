@@ -60,6 +60,6 @@ if __name__ == '__main__' :
     priv_key,pub_key = generateKeys()
     print(verifySignature(l[0],l[1],'Extremers',pub_key))
     print(generateNumberOfNeighbors())
-    print(binomialSum(4,2))
+    print(binomialSum(1,4,2))
     
 
