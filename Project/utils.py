@@ -1,5 +1,9 @@
+from functools import reduce
 from fastecdsa import keys,curve,ecdsa
 from hashlib import sha384
+from operator import mul
+from fractions import Fraction
+import sympy
 import random
 import numpy as np
 
@@ -26,6 +30,26 @@ def verifySignature(r,s,message,pub_key):
 def assignStake():
     return random.choice(list(range(1,51)))
 
+def generatePRGValue(seed):
+    random.seed(a=seed)
+    return random.randrange(0,2**256)
+
+def sortition(priv_key,seed,threshold,role,userweight,totalweight):
+    message = generatePRGValue(seed)
+    signedMessage = signMessage(message,priv_key)
+    successProb = threshold/totalweight
+    j=0
+    v = signedMessage/2**256
+    while v < binomialSum(j,userweight,successProb) or v >= binomialSum(j+1,userweight,successProb) :
+        j=j+1
+    return [signedMessage,j]
+
+def binomialSum(j,w,p):
+    sum = 0
+    for k in range(j+1):
+        sum = sum + sympy.binomial(w,k) * (p**k) * ((1-p)**(w-k))
+    return sum
+
 # For testing Purpose Only
 
 if __name__ == '__main__' :
@@ -36,5 +60,6 @@ if __name__ == '__main__' :
     priv_key,pub_key = generateKeys()
     print(verifySignature(l[0],l[1],'Extremers',pub_key))
     print(generateNumberOfNeighbors())
-
+    print(binomialSum(4,2))
+    
 
