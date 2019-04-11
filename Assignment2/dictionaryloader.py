@@ -17,7 +17,7 @@ if __name__ == '__main__' :
 			with xmlrpc.client.ServerProxy(url) as proxy :
 				with open(dictFile) as dictFileHandle:
 					for line in dictFileHandle:
-						targetUrl = proxy.find_successor(consistent_hash(line.strip().split(':')[0]))
+						targetUrl = proxy.find_successor(consistent_hash(line.strip().split(':')[0]), True)
 						with xmlrpc.client.ServerProxy(targetUrl) as targetproxy :
 							targetproxy.insert(line)
 		except:
