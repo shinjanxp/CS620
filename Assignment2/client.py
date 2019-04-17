@@ -18,7 +18,7 @@ if __name__ == '__main__' :
 				if choice == 1 :
 					with xmlrpc.client.ServerProxy(url) as proxy :
 							word = input('Enter a word to lookup : ')
-							targetUrl = proxy.find_successor(consistent_hash(word))
+							targetUrl = proxy.find_successor(consistent_hash(word), True)
 							with xmlrpc.client.ServerProxy(targetUrl) as targetproxy :
 								result = targetproxy.lookup(word)
 							print('Result : ',result)

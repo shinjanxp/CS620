@@ -110,16 +110,18 @@ class Node :
 
 	def find_successor(self, key, traceFlag=False): # returns url of successor of key
 		if is_in_interval(key, self.node_id+1, consistent_hash(self.successor)):
-			self.log_local("Successor found " + self.successor)
-			self.log_common("Successor found " + self.successor)
+			if traceFlag:
+				self.log_local("Successor found " + self.successor)
+				self.log_common("Successor found " + self.successor)
 			return self.successor
 		else:
 			n_prime = self.closest_preceding_node(key) 
 
 			with xmlrpc.client.ServerProxy(n_prime) as proxy:
-				self.log_local("Executing find_successor on "+ n_prime)
-				self.log_common("Executing find_successor on "+ n_prime)
-				return proxy.find_successor(key)
+				if traceFlag:
+					self.log_local("Executing find_successor on "+ n_prime)
+					self.log_common("Executing find_successor on "+ n_prime)
+				return proxy.find_successor(key, traceFlag)
 		pass
 
 	def insert(self, word):
@@ -139,8 +141,18 @@ class Node :
 	def get_predecessor(self):
 		return self.predecessor
 	def notify(self, n_prime):
+		old_predecessor = self.predecessor
 		if not self.predecessor	or is_in_interval(consistent_hash(n_prime), consistent_hash(self.predecessor)+1, self.node_id-1):
 			self.predecessor = n_prime
+		if self.predecessor != old_predecessor:
+			# New predecessor. need to move dictionary 
+			for key in self.data.copy():
+				if is_in_interval(consistent_hash(key), consistent_hash(old_predecessor)+1, consistent_hash(self.predecessor)):
+					self.log_local("Moving key "+key+" to "+self.predecessor)
+					with xmlrpc.client.ServerProxy(self.successor) as proxy:
+						proxy.insert(key+":"+self.data[key])
+					del self.data[key]
+
 		print("Predecessor: ", self.predecessor)
 		return True
 
@@ -170,8 +182,8 @@ class Node :
 			self.finger[0] = self.successor
 		with xmlrpc.client.ServerProxy(self.successor) as proxy:
 			proxy.notify(self.url)
-		self.log_local("Successor: "+ str(self.successor))
-		self.log_local("Predecessor: "+ str(self.predecessor))
+		# self.log_local("Successor: "+ str(self.successor))
+		# self.log_local("Predecessor: "+ str(self.predecessor))
 		return True
 
 	def fix_fingers(self):
