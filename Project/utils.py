@@ -64,6 +64,11 @@ def evaluatePriority(signedMessage,subuserIndex):
     h.update((signedMessage+str(subuserIndex)).encode())
     return h.hexdigest()
 
+def hashBlock(message):
+    h = hashlib.sha256()
+    h.update(message.encode())
+    return h.hexdigest()
+
 # For testing Purpose Only
 
 if __name__ == '__main__' :

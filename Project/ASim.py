@@ -2,7 +2,13 @@ import random, simpy
 import utils
 import numpy as np, networkx as nx
 RANDOM_SEED = 42
-N = 2000 # We have to simulate a network of N nodes
+T_proposer = 20
+T_step = 200
+T_final = 3
+L_proposer = 3000
+
+L_step = 3000
+N = 20 # We have to simulate a network of N nodes
 G = None
 
 #########################################
@@ -34,7 +40,32 @@ nx.set_edge_attributes(G, non_block_delay, 'non_block_delay')
 # print(nx.get_edge_attributes(G,'non_block_delay'))
 
 #########################################
-# Node class definition
+# Class definitions
+
+class Txn:
+    def __init__(self, creditor, debitor, amount):
+        self.creditor=creditor
+        self.debitor=debitor
+        self.amount=amount
+    def __str__(self):
+        return "%s pays %s to %s"%(self.creditor, self.amount, self.debitor)
+
+class Block:
+    def __init__(self, prev_block, txns):
+        self.prev_block = prev_block
+        self.prev_block_hash = utils.hashBlock(str(self.prev_block))
+        self.txns = txns
+    def __str__(self):
+        s = self.prev_block_hash
+        for t in self.txns:
+            s+= "||"+str(t)
+        return s
+
+class GenesisBlock(Block):
+    def __init__(self):
+        return super().__init__("", None)
+    def __str__(self):
+        return "We are building the best Algorand Discrete Event Simulator"
 
 class Node:
     def __init__(self, id):
@@ -42,7 +73,7 @@ class Node:
         self.priv_key, self.pub_key = utils.generateKeys()
         self.stake = random.randint(1,50)
         
-    def get_neighbours(self):
+    def getNeighbours(self):
         return [n for n in G[self.id]]
     # def broadcast
 
@@ -55,8 +86,14 @@ nodes = []
 for i in range(N):
     nodes.append(Node(i))
 print("Created nodes")
-print("Neighbor of 1", nodes[0].get_neighbours())
 
+# t1 = Txn(1, 2, 10)
+# t2 = Txn(2, 3, 15)
+# t3 = Txn(4, 3, 12)
+# g = GenesisBlock()
+# print(g)
+# b = Block(g, [t1,t2,t3])
+# print(b)
 #########################################
 # Create an environment and start the setup process
 env = simpy.Environment()
