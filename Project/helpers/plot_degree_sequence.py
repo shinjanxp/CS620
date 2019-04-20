@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 from networkx import nx
 import numpy as np
 
-z = np.random.uniform(4,9,2000)
+z = np.random.uniform(4,9,50)
 z = list(map(int, z))
 if sum(z) %2 !=0:
     z[0] = 5 if z[0]%2 ==0 else 6
@@ -46,6 +46,15 @@ print("degree #nodes")
 for d in hist:
     print('%d %d' % (d, hist[d]))
 
+edges =list(G.edges)
+block_delay = {}
+# ea = nx.edge_betweenness_centrality(G, normalized=False) # get a dictionary of edges: value. easier to modify
+block_delay_distribution = list(np.random.normal(200, 400, G.number_of_edges()))
+for e in edges:
+    block_delay[e] = max(0, block_delay_distribution.pop())
+# print(block_delay)
+nx.set_edge_attributes(G, block_delay, 'block_delay')
+print(nx.get_edge_attributes(G, 'block_delay'))
 # nx.draw(G)
 # plt.show()
  

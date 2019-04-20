@@ -3,13 +3,12 @@ from fastecdsa import keys,curve,ecdsa
 from hashlib import sha384
 from operator import mul
 from fractions import Fraction
-import sympy
 import random
 import numpy as np
 
 def generateKeys():
     priv_key,pub_key = keys.gen_keypair(curve.P256) # Refer https://safecurves.cr.yp.to/ Options : P256,P224,...
-    return [priv_key,pub_key]
+    return priv_key,pub_key
 
 def generateNumberOfNeighbors():
     return random.choice(list(range(4,9)))
