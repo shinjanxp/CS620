@@ -29,7 +29,6 @@ def generateNonBlockDelay():
 
 # For signing and verifying messages 
 def signMessage(message,priv_key):
-    print('the message : ',message)
     r,s = ecdsa.sign(message,priv_key)
     return [r,s]
 
@@ -86,21 +85,37 @@ def hashBlock(message):
 # For testing Purpose Only
 
 if __name__ == '__main__' :
+    
     priv_key,pub_key = generateKeys()  
     l = signMessage('Extremers',priv_key)
+    
+    # --------- Unit Test for Signature Verification ---------------
     #print(verifySignature(l[0],l[1],'Extremers',pub_key))
-    #print(verifySignature(l[0],l[1],'Extremerso',pub_key))
-    priv_key,pub_key = generateKeys()
+    #print(verifySignature(l[0],l[1],'Extremerso',pub_key))   
+    #priv_key,pub_key = generateKeys()
     #print(verifySignature(l[0],l[1],'Extremers',pub_key))
+
+    # --------- Unit Test for Number of Neighbours generation ---------------
     #print(generateNumberOfNeighbors())
+
+    # --------- Unit Test for Number of Binomial Sum ---------------
     #print('Binomial Sum: ',binomialSum(1,4,0.2))
+
+    # --------- Unit Test for Number of PRG generation ---------------
     #print(generatePRGValue('whoa'))
+
+    
+    # --------- Unit Test for Sortition and Verify Sortition ---------------
+    # Test Desc : Number of Subusers selected should be proportional to user weight
     m = generatePRGValue('whoa')
-    #print(signMessage('43309844026517770324480508592060893747934569917128262563705402482600339672645',priv_key))
-    #print(evaluatePriority('axe',1))
-    print(sortition(priv_key,evaluatePriority('axe',1),1,2,15,'hehe',12,100))
-    hash,proof,j = sortition(priv_key,evaluatePriority('axe',1),1,2,15,'hehe',12,100)
+    print(sortition(priv_key,evaluatePriority('axe',1),1,2,15,'hehe',20,100))
+    hash,proof,j = sortition(priv_key,evaluatePriority('axe',1),1,2,15,'hehe',20,100)
     print(j)
-    print(verifySortition(pub_key,hash,proof,evaluatePriority('axe',1),1,2,15,'hehe',12,100))
+    print(verifySortition(pub_key,hash,proof,evaluatePriority('axe',1),1,2,15,'hehe',20,100))
+    priv_key2,pub_key2 = generateKeys()
+    print(sortition(priv_key2,evaluatePriority('axe',1),1,2,15,'hehe',80,100))
+    hash,proof,j = sortition(priv_key2,evaluatePriority('axe',1),1,2,15,'hehe',80,100)
+    print(j)
+    print(verifySortition(pub_key2,hash,proof,evaluatePriority('axe',1),1,2,15,'hehe',80,100))
 
 
