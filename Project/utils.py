@@ -5,6 +5,7 @@ from operator import mul
 from fractions import Fraction
 import random
 import numpy as np
+import sympy
 
 # Used for generating Key Pairs for each node
 # Private keys in ECDSA are integers while Public Key are points on curve P256
@@ -48,10 +49,23 @@ def sortition(priv_key,prevBlockHash,roundNo,stepNo,threshold,role,userweight,to
     signedMessage = signMessage(str(message),priv_key)
     successProb = threshold/totalweight
     j=0
-    v = ((signedMessage[0]+signedMessage[1])%(2**256))/2**256
-    while v < binomialSum(j,userweight,successProb) or v >= binomialSum(j+1,userweight,successProb) :
+    v = (sum(signedMessage)%(2**256))/2**256
+    while (v < binomialSum(j,userweight,successProb) or v >= binomialSum(j+1,userweight,successProb)) and (j<userweight) :
         j=j+1
-    return [((signedMessage[0]+signedMessage[1])%(2**256)),j]
+    return (sum(signedMessage)%(2**256)),signedMessage,j
+
+def verifySortition(pub_key,hash,signedMessage,prevBlockHash,roundNo,stepNo,threshold,role,userweight,totalweight):
+    seed = str(prevBlockHash)+str(roundNo)+str(stepNo)
+    message = generatePRGValue(seed)
+    if verifySignature(signedMessage[0],signedMessage[1],str(message),pub_key) :
+        successProb = threshold/totalweight
+        j=0
+        v = hash/2**256
+        while (v < binomialSum(j,userweight,successProb) or v >= binomialSum(j+1,userweight,successProb)) and (j<userweight) :
+            j=j+1
+        return j
+    else :
+        return 0
 
 def binomialSum(j,w,p):
     sum = 0
@@ -79,12 +93,14 @@ if __name__ == '__main__' :
     priv_key,pub_key = generateKeys()
     #print(verifySignature(l[0],l[1],'Extremers',pub_key))
     #print(generateNumberOfNeighbors())
-    print('Binomial Sum: ',binomialSum(1,4,0.2))
+    #print('Binomial Sum: ',binomialSum(1,4,0.2))
     #print(generatePRGValue('whoa'))
     m = generatePRGValue('whoa')
-    print(signMessage('43309844026517770324480508592060893747934569917128262563705402482600339672645',priv_key))
+    #print(signMessage('43309844026517770324480508592060893747934569917128262563705402482600339672645',priv_key))
     #print(evaluatePriority('axe',1))
     print(sortition(priv_key,evaluatePriority('axe',1),1,2,15,'hehe',12,100))
-
+    hash,proof,j = sortition(priv_key,evaluatePriority('axe',1),1,2,15,'hehe',12,100)
+    print(j)
+    print(verifySortition(pub_key,hash,proof,evaluatePriority('axe',1),1,2,15,'hehe',12,100))
 
 
