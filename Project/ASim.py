@@ -7,7 +7,7 @@ T_proposer = 20
 T_step = 200
 T_final = 3
 L_proposer = 3000
-
+MAX_STEPS = 15
 L_step = 3000
 N = 200 # We have to simulate a network of N nodes
 G = None
@@ -52,6 +52,43 @@ def deliverMsg(evt):
     neighbour.rcv_pipe.put(message)
     print ("At %d, sending %s to %d"%(env.now, message, neighbour_id))
 
+def verifyAndGossipBlockProposal(env, node_id, message):
+    node = nodes[node_id]
+    if not node.max_priority_block_proposal_payload or message.payload.priority > node.max_priority_block_proposal_payload.priority:
+        print ("At %d, node %d gossipped block proposal message."%(env.now,node_id))
+        node.max_priority_block_proposal_payload = message.payload
+        # relay this message
+        for neighbour in node.getNeighbourIds():
+            event = simpy.events.Timeout(env, delay=node.getBlockDelay(neighbour), value=(env, neighbour, message))
+            event.callbacks.append(verifyAndGossip)
+    # else:
+        # print ("At %d, node %d dropped message."%(env.now,node_id))
+        
+
+def verifyAndGossip(evt):
+    env = evt.value[0]
+    node_id = evt.value[1]
+    message = evt.value[2]
+    # Verify message signature
+    if utils.verifySignature(message.r, message.s, str(message.payload), message.pub_key):
+        if type(message.payload).__name__ == "BlockProposalPayload":
+            verifyAndGossipBlockProposal(env, node_id, message)
+
+class BlockProposalPayload():
+    def __init__(self, round, vrf_hash, sub_user_idx, priority):
+        self.round = round
+        self.vrf_hash = vrf_hash
+        self.sub_user_idx = sub_user_idx
+        self.priority = priority
+    def __str__(self):
+        return str(self.round) + str(self.vrf_hash) + str(self.sub_user_idx) + str(self.priority)
+
+class Message:
+    def __init__(self, payload, priv_key, pub_key):
+        self.payload = payload
+        self.pub_key = pub_key
+        self.r, self.s = utils.signMessage(str(payload), priv_key)
+
 class Txn:
     def __init__(self, creditor, debitor, amount):
         self.creditor=creditor
@@ -81,7 +118,9 @@ class Node:
     def __init__(self, id, env):
         self.id = id
         self.priv_key, self.pub_key = utils.generateKeys()
-        self.stake = random.randint(1,50)
+        self.stake = random.randint(1,50) #Assign random uniform stake
+        self.block_pointer = GenesisBlock()
+        self.max_priority_block_proposal_payload = None
         self.env = env
         # Ref: https://simpy.readthedocs.io/en/latest/examples/process_communication.html
         self.rcv_pipe = simpy.Store(env)
@@ -112,6 +151,13 @@ class Node:
             msg = yield self.rcv_pipe.get()
             print('at time %d: %s received message: %s.' %(env.now, self.id, msg))
 
+    def gossip(self, message, is_block, timeout):
+        # Message = <Payload||Public Key|| Meta data for Signature verification>
+        for neighbour in self.getNeighbourIds():
+            event = simpy.events.Timeout(self.env, delay=self.getBlockDelay(neighbour) if is_block else self.getNonBlockDelay(neighbour), value=(self.env, neighbour, message))
+            event.callbacks.append(verifyAndGossip)
+        yield env.timeout(timeout)
+
 
 #########################################
 # Setup nodes 
@@ -127,11 +173,14 @@ if __name__ == '__main__' :
     for i in range(N):
         nodes.append(Node(i, env))
     print("Created nodes")
-    print(nodes[0].getNeighbourIds())
     # For one-to-one or many-to-one type pipes, use Store
-    for n in nodes[0].getNeighbourIds():
-        env.process(nodes[n].broadcast("Yo from %d"%(n), True))
-    env.process(nodes[0].receive(3000))
+    # for n in nodes[0].getNeighbourIds():
+    #     env.process(nodes[n].broadcast("Yo from %d"%(n), True))
+    # env.process(nodes[0].receive(3000))
+    print(nodes[0].getNeighbourIds())
+    b = BlockProposalPayload(1,2,3,4)
+    m = Message(b, nodes[0].priv_key, nodes[0].pub_key)
+    env.process(nodes[0].gossip(m, True, 3000))
 
     print('\nOne-to-one pipe communication\n')
     env.run(until=SIM_TIME)

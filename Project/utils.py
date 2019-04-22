@@ -30,7 +30,7 @@ def generateNonBlockDelay():
 # For signing and verifying messages 
 def signMessage(message,priv_key):
     r,s = ecdsa.sign(message,priv_key)
-    return [r,s]
+    return r,s
 
 def verifySignature(r,s,message,pub_key):
     return ecdsa.verify((r,s),message,pub_key)
