@@ -2,7 +2,7 @@ import random, simpy
 import utils
 import numpy as np, networkx as nx
 RANDOM_SEED = 42
-SIM_TIME = 5000
+SIM_TIME = 10000
 T_proposer = 20
 T_step = 200
 T_final = 3
@@ -11,6 +11,7 @@ MAX_STEPS = 15
 L_step = 3000
 N = 200 # We have to simulate a network of N nodes
 G = None
+W = 0 # Total stake in the system
 nodes = []
 
 #########################################
@@ -44,19 +45,19 @@ nx.set_edge_attributes(G, non_block_delay, 'non_block_delay')
 #########################################
 # Class definitions
 
-def deliverMsg(evt):
-    env = evt.value[0]
-    neighbour_id = evt.value[1]
-    message = evt.value[2]
-    neighbour = nodes[neighbour_id]
-    neighbour.rcv_pipe.put(message)
-    print ("At %d, sending %s to %d"%(env.now, message, neighbour_id))
+# def deliverMsg(evt):
+#     env = evt.value[0]
+#     neighbour_id = evt.value[1]
+#     message = evt.value[2]
+#     neighbour = nodes[neighbour_id]
+#     neighbour.rcv_pipe.put(message)
+#     print ("At %d, sending %s to %d"%(env.now, message, neighbour_id))
 
 def verifyAndGossipBlockProposal(env, node_id, message):
     node = nodes[node_id]
-    if not node.max_priority_block_proposal_payload or message.payload.priority > node.max_priority_block_proposal_payload.priority:
-        print ("At %d, node %d gossipped block proposal message."%(env.now,node_id))
-        node.max_priority_block_proposal_payload = message.payload
+    if not node.max_priority_block_proposal_message or message.payload.priority > node.max_priority_block_proposal_message.payload.priority:
+        # print ("At %d, node %d gossipped block proposal message."%(env.now,node_id))
+        node.max_priority_block_proposal_message = message
         # relay this message
         for neighbour in node.getNeighbourIds():
             event = simpy.events.Timeout(env, delay=node.getBlockDelay(neighbour), value=(env, neighbour, message))
@@ -120,7 +121,8 @@ class Node:
         self.priv_key, self.pub_key = utils.generateKeys()
         self.stake = random.randint(1,50) #Assign random uniform stake
         self.block_pointer = GenesisBlock()
-        self.max_priority_block_proposal_payload = None
+        self.round = 0
+        self.max_priority_block_proposal_message = None
         self.env = env
         # Ref: https://simpy.readthedocs.io/en/latest/examples/process_communication.html
         self.rcv_pipe = simpy.Store(env)
@@ -137,27 +139,34 @@ class Node:
     def getNonBlockDelay(self, neighbour_id):
         return G.edges[self.id, neighbour_id, 0]['non_block_delay']
 
-    def broadcast(self, message, is_block):
-        # Ref: https://www.ideals.illinois.edu/bitstream/handle/2142/98095/HUANG-THESIS-2017.pdf?sequence=1&isAllowed=y
-        for neighbour in self.getNeighbourIds():
-            event = simpy.events.Timeout(self.env, delay=self.getBlockDelay(neighbour) if is_block else self.getNonBlockDelay(neighbour), value=(self.env, neighbour, message))
-            event.callbacks.append(deliverMsg)
-        yield env.timeout(3000)
-
-    def receive(self, timeout):
-        yield env.timeout(timeout)
-        while True:
-        # Get event for message pipe
-            msg = yield self.rcv_pipe.get()
-            print('at time %d: %s received message: %s.' %(env.now, self.id, msg))
-
     def gossip(self, message, is_block, timeout):
         # Message = <Payload||Public Key|| Meta data for Signature verification>
-        for neighbour in self.getNeighbourIds():
-            event = simpy.events.Timeout(self.env, delay=self.getBlockDelay(neighbour) if is_block else self.getNonBlockDelay(neighbour), value=(self.env, neighbour, message))
-            event.callbacks.append(verifyAndGossip)
-        yield env.timeout(timeout)
+        if message:
+            for neighbour in self.getNeighbourIds():
+                # print("%d neighbour %d"%(self.id, neighbour))
+                event = simpy.events.Timeout(self.env, delay=self.getBlockDelay(neighbour) if is_block else self.getNonBlockDelay(neighbour), value=(self.env, neighbour, message))
+                event.callbacks.append(verifyAndGossip)
+        return env.timeout(timeout)
 
+    def start(self):
+        # starts the simulation process for this node
+        hash, proof, j = utils.sortition(self.priv_key, utils.hashBlock(str(self.block_pointer)), self.round, 0, T_proposer, None, self.stake, W )
+        if j > 0:
+            # candidate for block proposal
+            priority = utils.evaluatePriority(str(hash), j)
+            # Construct message to gossip
+            payload = BlockProposalPayload(self.round, hash, j, priority)
+            message = Message(payload, self.priv_key, self.pub_key)
+            self.max_priority_block_proposal_message = message
+            yield self.gossip(message, True, 3000)
+        else:
+            # just relay node
+            self.gossip(None, True, 3000)
+        # Gossip block proposal over. Now check if this is the greatest priority proposed block
+        if self.max_priority_block_proposal_message and self.max_priority_block_proposal_message.pub_key == self.pub_key :
+            print ("%d is block proposer with priority %s"%(self.id, self.max_priority_block_proposal_message.payload.priority))
+        yield env.timeout(2000)
+            
 
 #########################################
 # Setup nodes 
@@ -172,17 +181,19 @@ if __name__ == '__main__' :
     random.seed(RANDOM_SEED)  # This helps reproducing the results
     for i in range(N):
         nodes.append(Node(i, env))
+        W += nodes[i].stake
+        # print("%d stake: %d"%(nodes[i].id, nodes[i].stake))
+        env.process(nodes[i].start())
     print("Created nodes")
     # For one-to-one or many-to-one type pipes, use Store
     # for n in nodes[0].getNeighbourIds():
     #     env.process(nodes[n].broadcast("Yo from %d"%(n), True))
     # env.process(nodes[0].receive(3000))
-    print(nodes[0].getNeighbourIds())
-    b = BlockProposalPayload(1,2,3,4)
-    m = Message(b, nodes[0].priv_key, nodes[0].pub_key)
-    env.process(nodes[0].gossip(m, True, 3000))
+    # print(nodes[0].getNeighbourIds())
+    # b = BlockProposalPayload(1,2,3,4)
+    # m = Message(b, nodes[0].priv_key, nodes[0].pub_key)
+    # env.process(nodes[0].gossip(m, True, 3000))
 
-    print('\nOne-to-one pipe communication\n')
     env.run(until=SIM_TIME)
     # t1 = Txn(1, 2, 10)
     # t2 = Txn(2, 3, 15)
