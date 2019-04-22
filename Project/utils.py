@@ -72,10 +72,18 @@ def binomialSum(j,w,p):
         sum = sum + sympy.binomial(w,k) * (p**k) * ((1-p)**(w-k))
     return sum
 
-def evaluatePriority(signedMessage,subuserIndex):
+def evaluatePriorityHash(signedMessage,subuserIndex):
     h = hashlib.sha256()
     h.update((signedMessage+str(subuserIndex)).encode())
     return h.hexdigest()
+
+def evaluatePriority(signedMessage,noOfSubUsers):
+    max = evaluatePriorityHash(signedMessage,0)
+    for i in range(noOfSubUsers):
+        x = evaluatePriorityHash(signedMessage,i)
+        if max < x:
+            max = x
+    return max
 
 def hashBlock(message):
     h = hashlib.sha256()
