@@ -50,9 +50,10 @@ def sortition(priv_key,prevBlockHash,roundNo,stepNo,threshold,role,userweight,to
     #print('Probability : ',successProb)
     j=0
     v = int(hashBlock(str(signedMessage)),base=16)/2**256 #(sum(signedMessage)%(2**256))/2**256
+    # print('v : ',v)
     while ((v < binomialSum(j,userweight,successProb)) or (v >= binomialSum(j+1,userweight,successProb))) and (j<=userweight) :
         j=j+1
-    return (sum(signedMessage)%(2**256)),signedMessage,j
+    return int(hashBlock(str(signedMessage)),base=16),signedMessage,j
 
 def verifySortition(pub_key,hash,signedMessage,prevBlockHash,roundNo,stepNo,threshold,role,userweight,totalweight):
     seed = str(prevBlockHash)+str(roundNo)+str(stepNo)
@@ -61,6 +62,7 @@ def verifySortition(pub_key,hash,signedMessage,prevBlockHash,roundNo,stepNo,thre
         successProb = threshold/totalweight
         j=0
         v = hash/2**256
+        # print('Verify v : ',v)
         while (v < binomialSum(j,userweight,successProb) or v >= binomialSum(j+1,userweight,successProb)) and (j<userweight) :
             j=j+1
         return j

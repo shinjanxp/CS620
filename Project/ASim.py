@@ -53,36 +53,62 @@ nx.set_edge_attributes(G, non_block_delay, 'non_block_delay')
 #     neighbour.rcv_pipe.put(message)
 #     print ("At %d, sending %s to %d"%(env.now, message, neighbour_id))
 
-def verifyAndGossipBlockProposal(env, node_id, message):
-    node = nodes[node_id]
-    if not node.max_priority_block_proposal_message or message.payload.priority > node.max_priority_block_proposal_message.payload.priority:
+def verifyAndGossipPriorityProposal(env, node, message):
+    if not node.max_priority_proposal_message or message.payload.priority > node.max_priority_proposal_message.payload.priority:
         # print ("At %d, node %d gossipped block proposal message."%(env.now,node_id))
-        node.max_priority_block_proposal_message = message
+        node.max_priority_proposal_message = message
         # relay this message
         for neighbour in node.getNeighbourIds():
-            event = simpy.events.Timeout(env, delay=node.getBlockDelay(neighbour), value=(env, neighbour, message))
+            event = simpy.events.Timeout(env, delay=node.getNonBlockDelay(neighbour), value=(env, neighbour, message))
             event.callbacks.append(verifyAndGossip)
-    # else:
-        # print ("At %d, node %d dropped message."%(env.now,node_id))
-        
+      
+def verifyAndGossipBlockProposal(env, node, message):
+    print("%s heard block proposal %s"%(str(node), message.payload.random_string))
+    if not utils.verifySortition(message.pub_key, message.payload.priority_proposal_payload.vrf_hash, message.payload.priority_proposal_payload.proof, message.payload.prev_block_hash, message.payload.priority_proposal_payload.round, 0, T_proposer, None, message.payload.stake, W):
+        print("%s Sortition not validated"%(str(node), ))
 
+        return None
+    node.block_proposals_heard.append(message.payload)
+    # relay this message
+    for neighbour in node.getNeighbourIds():
+        event = simpy.events.Timeout(env, delay=node.getBlockDelay(neighbour), value=(env, neighbour, message))
+        event.callbacks.append(verifyAndGossip)
+ 
 def verifyAndGossip(evt):
     env = evt.value[0]
     node_id = evt.value[1]
     message = evt.value[2]
+    node = nodes[node_id]
+    #Check if this message has come this way before
+    if (message.r, message.s) in node.messages_seen:
+        return None
+    # Add this message to seen list
+    node.messages_seen.append((message.r, message.s,))
     # Verify message signature
     if utils.verifySignature(message.r, message.s, str(message.payload), message.pub_key):
-        if type(message.payload).__name__ == "BlockProposalPayload":
-            verifyAndGossipBlockProposal(env, node_id, message)
+        if type(message.payload).__name__ == "PriorityProposalPayload":
+            verifyAndGossipPriorityProposal(env, node, message)
+        elif type(message.payload).__name__ == "BlockProposalPayload":
+            verifyAndGossipBlockProposal(env, node, message)
 
-class BlockProposalPayload():
-    def __init__(self, round, vrf_hash, sub_user_idx, priority):
+class PriorityProposalPayload():
+    def __init__(self, round, vrf_hash, proof, sub_user_idx, priority):
         self.round = round
         self.vrf_hash = vrf_hash
+        self.proof = proof
         self.sub_user_idx = sub_user_idx
         self.priority = priority
     def __str__(self):
         return str(self.round) + str(self.vrf_hash) + str(self.sub_user_idx) + str(self.priority)
+
+class BlockProposalPayload():
+    def __init__(self, prev_block_hash, priority_proposal_payload, stake):
+        self.prev_block_hash = prev_block_hash
+        self.random_string = str(random.getrandbits(256))
+        self.priority_proposal_payload = priority_proposal_payload
+        self.stake = stake
+    def __str__(self):
+        return str(self.prev_block_hash) + str(self.random_string) + str(self.priority_proposal_payload)
 
 class Message:
     def __init__(self, payload, priv_key, pub_key):
@@ -90,30 +116,25 @@ class Message:
         self.pub_key = pub_key
         self.r, self.s = utils.signMessage(str(payload), priv_key)
 
-class Txn:
-    def __init__(self, creditor, debitor, amount):
-        self.creditor=creditor
-        self.debitor=debitor
-        self.amount=amount
-    def __str__(self):
-        return "%s pays %s to %s"%(self.creditor, self.amount, self.debitor)
 
 class Block:
-    def __init__(self, prev_block, txns):
+    def __init__(self, prev_block, random_string=str(random.getrandbits(256))):
         self.prev_block = prev_block
-        self.prev_block_hash = utils.hashBlock(str(self.prev_block))
-        self.txns = txns
+        self.prev_block_hash = self.prev_block.hash()
+        # if random_string == None:
+        #     random_string = 
+        self.random_string = random_string
     def __str__(self):
-        s = self.prev_block_hash
-        for t in self.txns:
-            s+= "||"+str(t)
-        return s
+        return self.prev_block_hash + self.random_string
 
 class GenesisBlock(Block):
     def __init__(self):
-        return super().__init__("", None)
+        self.prev_block_hash = "Genesis: "
+        self.random_string = "We are building the best Algorand Discrete Event Simulator"
     def __str__(self):
-        return "We are building the best Algorand Discrete Event Simulator"
+        return super().__str__()
+    def hash(self):
+        return utils.hashBlock(str(self))
 
 class Node:
     def __init__(self, id, env):
@@ -122,7 +143,7 @@ class Node:
         self.stake = random.randint(1,50) #Assign random uniform stake
         self.block_pointer = GenesisBlock()
         self.round = 0
-        self.max_priority_block_proposal_message = None
+        self.max_priority_proposal_message = None
         self.env = env
         # Ref: https://simpy.readthedocs.io/en/latest/examples/process_communication.html
         self.rcv_pipe = simpy.Store(env)
@@ -150,23 +171,34 @@ class Node:
 
     def start(self):
         # starts the simulation process for this node
+
+        self.block_proposals_heard = []
+        self.messages_seen = []
         #print("%d : %d"%(self.id, W))
-        hash, proof, j = utils.sortition(self.priv_key, utils.hashBlock(str(self.block_pointer)), self.round, 0, T_proposer, None, self.stake, W )
+        hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, 0, T_proposer, None, self.stake, W )
         if j > 0:
             # candidate for block proposal
             print("%d : %d"%(self.id, j))
             priority = utils.evaluatePriority(str(hash), j)
             # Construct message to gossip
-            payload = BlockProposalPayload(self.round, hash, j, priority)
-            message = Message(payload, self.priv_key, self.pub_key)
-            self.max_priority_block_proposal_message = message
-            yield self.gossip(message, True, 3000)
+            priority_proposal_payload = PriorityProposalPayload(self.round, hash, proof, j, priority)
+            message = Message(priority_proposal_payload, self.priv_key, self.pub_key)
+            self.max_priority_proposal_message = message
+            yield self.gossip(message, False, 3000)
         else:
             # just relay node
             self.gossip(None, True, 3000)
         # Gossip block proposal over. Now check if this is the greatest priority proposed block
-        if self.max_priority_block_proposal_message and self.max_priority_block_proposal_message.pub_key == self.pub_key :
-            print ("%d is block proposer with priority %s"%(self.id, self.max_priority_block_proposal_message.payload.priority))
+        if self.max_priority_proposal_message and self.max_priority_proposal_message.pub_key == self.pub_key :
+            # This dude is block proposer! Congratulations! Now make a block proposal message
+            block_proposal_payload = BlockProposalPayload(self.block_pointer.hash(), self.max_priority_proposal_message.payload, self.stake)
+            message = Message(block_proposal_payload, self.priv_key, self.pub_key)
+            yield self.gossip(message, True, 1)
+            print ("%d is block proposer with priority %s"%(self.id, self.max_priority_proposal_message.payload.priority))
+
+        # Node checks its selection in voting committee using sortition
+        # hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, 0, T_proposer, None, self.stake, W )
+        
         yield env.timeout(2000)
             
 
@@ -192,7 +224,7 @@ if __name__ == '__main__' :
     #     env.process(nodes[n].broadcast("Yo from %d"%(n), True))
     # env.process(nodes[0].receive(3000))
     # print(nodes[0].getNeighbourIds())
-    # b = BlockProposalPayload(1,2,3,4)
+    # b = PriorityProposalPayload(1,2,3,4)
     # m = Message(b, nodes[0].priv_key, nodes[0].pub_key)
     # env.process(nodes[0].gossip(m, True, 3000))
 
