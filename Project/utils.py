@@ -47,9 +47,10 @@ def sortition(priv_key,prevBlockHash,roundNo,stepNo,threshold,role,userweight,to
     message = generatePRGValue(seed)
     signedMessage = signMessage(str(message),priv_key)
     successProb = threshold/totalweight
+    #print('Probability : ',successProb)
     j=0
-    v = (sum(signedMessage)%(2**256))/2**256
-    while (v < binomialSum(j,userweight,successProb) or v >= binomialSum(j+1,userweight,successProb)) and (j<userweight) :
+    v = int(hashBlock(str(signedMessage)),base=16)/2**256 #(sum(signedMessage)%(2**256))/2**256
+    while ((v < binomialSum(j,userweight,successProb)) or (v >= binomialSum(j+1,userweight,successProb))) and (j<=userweight) :
         j=j+1
     return (sum(signedMessage)%(2**256)),signedMessage,j
 
@@ -68,8 +69,10 @@ def verifySortition(pub_key,hash,signedMessage,prevBlockHash,roundNo,stepNo,thre
 
 def binomialSum(j,w,p):
     sum = 0
-    for k in range(j+1):
+ #   print('p = ',p)
+    for k in range(j):
         sum = sum + sympy.binomial(w,k) * (p**k) * ((1-p)**(w-k))
+ #   print('B(%d,%d,%f) : %f'%(j,w,p,sum))
     return sum
 
 def evaluatePriorityHash(signedMessage,subuserIndex):

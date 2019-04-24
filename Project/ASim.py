@@ -9,7 +9,7 @@ T_final = 3
 L_proposer = 3000
 MAX_STEPS = 15
 L_step = 3000
-N = 200 # We have to simulate a network of N nodes
+N = 2000 # We have to simulate a network of N nodes
 G = None
 W = 0 # Total stake in the system
 nodes = []
@@ -150,9 +150,11 @@ class Node:
 
     def start(self):
         # starts the simulation process for this node
+        #print("%d : %d"%(self.id, W))
         hash, proof, j = utils.sortition(self.priv_key, utils.hashBlock(str(self.block_pointer)), self.round, 0, T_proposer, None, self.stake, W )
         if j > 0:
             # candidate for block proposal
+            print("%d : %d"%(self.id, j))
             priority = utils.evaluatePriority(str(hash), j)
             # Construct message to gossip
             payload = BlockProposalPayload(self.round, hash, j, priority)
