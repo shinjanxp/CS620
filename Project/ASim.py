@@ -10,17 +10,20 @@ MAX_STEPS = 15
 N = 2000 # We have to simulate a network of N nodes
 
 # Variable parameters
-T_proposer = 20
-T_step = 200
-T_final = 3
+t_proposer = 20
+t_step = 200
+t_final = 3
 L_proposer = 3000
 L_step = 3000
 L_block = 30000
 
 # Global initializations
 G = None
-W = 0 # Total stake in the system
 nodes = []
+ctx = {
+    'W' : 0,
+    'weight':{}
+}
 
 #########################################
 # Network setup
@@ -72,7 +75,7 @@ def verifyAndGossipPriorityProposal(env, node, message):
       
 def verifyAndGossipBlockProposal(env, node, message):
     # verify sortition
-    if not utils.verifySortition(message.pub_key, message.payload.priority_proposal_payload.vrf_hash, message.payload.priority_proposal_payload.proof, message.payload.prev_block_hash, message.payload.priority_proposal_payload.round, 0, T_proposer, None, message.payload.stake, W):
+    if not utils.verifySortition(message.pub_key, message.payload.priority_proposal_payload.vrf_hash, message.payload.priority_proposal_payload.proof, message.payload.prev_block_hash, message.payload.priority_proposal_payload.round, 0, t_proposer, None, message.payload.stake, ctx['W']):
         return None
     # Check whether proposal is coming from highest priority proposer
     if node.max_priority_proposal_message and not node.max_priority_proposal_message.pub_key == message.pub_key:
@@ -137,6 +140,7 @@ class CommitteeVotePayload():
         self.j = j
         self.vrf_hash = vrf_hash
         self.vrf_proof = vrf_proof
+
     def __str__(self):
         return str(self.prev_block_hash) + str(self.curr_block_hash) + str(self.round) + str(self.step) + str(self.j) + str(self.vrf_hash) + str(self.vrf_proof) 
 
@@ -198,19 +202,39 @@ class Node:
                 event.callbacks.append(verifyAndGossip)
         # return env.timeout(timeout)
     def committeeVote(self, step, value):
-        hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, step, T_step, "committee", self.stake, W )
+        hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, step, t_step, "committee", self.stake, ctx['W'] )
         if j > 0 :
             print ("%d: %d selected in committee"%(self.env.now, self.id))
             committee_vote_payload = CommitteeVotePayload(str(self.block_pointer.hash()), str(value), self.round, step, j, hash, proof)
             message = Message(committee_vote_payload, self.priv_key, self.pub_key)
             self.gossip(message, False)
+    
+    def processMsg(self, t, message):
+        if message.payload.prev_block_hash != utils.hashBlock(str(self.block_pointer)):
+            return 0, None, None
+        votes = utils.verifySortition(message.pub_key, message.payload.vrf_hash, message.payload.vrf_proof, message.payload.prev_block_hash, message.payload.round, message.payload.step, t, ctx['weight'][message.pub_key], ctx['W'])
+        return votes, message.payload.curr_block_hash, message.payload.vrf_hash
+
+    def countVotes(self, step, T, t, L):
+        self.counts = {}
+        self.voters = {}
+        for message in self.votes_heard:
+            votes, value, sorthash = self.processMsg(t, message)
+            if message.pub_key in voters or votes == 0:
+                continue
+            voters.append(message.pub_key)
+            counts[value] = votes if not counts[value] else counts[value] + votes
+            if counts[value] > T * t:
+                return value
+        return None
+
 
     def reduction(self, hblock):
-
         self.committeeVote(3, str(hblock))
         self.votes_heard = []
         yield self.env.timeout(L_step)
         print ("%d: %d heard %d votes"%(self.env.now, self.id, len(self.votes_heard)))
+        # Count received votes
 
     def start(self):
         # starts the simulation process for this node
@@ -221,7 +245,7 @@ class Node:
         self.is_committee_member = False
         # 1. After consensus on a block in the previous round, each node queries PRG
         # 2. With the output of the PRG and τ proposer = 20, each node should check whether it has been selected as a block proposer or not
-        hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, 0, T_proposer, None, self.stake, W )
+        hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, 0, t_proposer, None, self.stake, ctx['W'] )
         message = None
         if j > 0:
             print("%d: %d selected as priority proposer"%(self.env.now,self.id))
@@ -269,8 +293,10 @@ if __name__ == '__main__' :
     env = simpy.Environment()
     random.seed(RANDOM_SEED)  # This helps reproducing the results
     for i in range(N):
-        nodes.append(Node(i, env))
-        W += nodes[i].stake
+        n = Node(i, env)
+        nodes.append(n)
+        ctx['W'] += n.stake
+        ctx['weight'][n.pub_key] = n.stake 
         # print("%d stake: %d"%(nodes[i].id, nodes[i].stake))
         env.process(nodes[i].start())
     print("Created nodes")
