@@ -2,6 +2,7 @@
 import random, simpy
 import utils
 import numpy as np, networkx as nx
+from matplotlib import pyplot as plt
 
 # Non-variable parameters
 RANDOM_SEED = 42
@@ -373,6 +374,9 @@ class Node:
         #yield from self.reduction(block.hash())
         yield from self.byzagreement(self.round,block)
         yield env.timeout(2000)
+        
+
+
             
 
 #########################################
@@ -411,4 +415,8 @@ if __name__ == '__main__' :
     # print(g)
     # b = Block(g, [t1,t2,t3])
     # print(b)
-
+    mean_stakes,count = utils.avg_sub_users,utils.count
+    mean_stakes = [a/count for a in mean_stakes]
+    plt.title('Stakes vs Mean Sub Users selected')
+    plt.plot(list(range(1,52)),mean_stakes)
+    plt.show()
