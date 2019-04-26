@@ -6,13 +6,14 @@ import numpy as np, networkx as nx
 # Non-variable parameters
 RANDOM_SEED = 42
 SIM_TIME = 100000
-MAX_STEPS = 15
-N = 2000 # We have to simulate a network of N nodes
+MAX_STEPS = 10
+N = 256 # We have to simulate a network of N nodes
 
 # Variable parameters
-t_proposer = 20
-t_step = 200
+t_proposer = 5
+t_step = 32
 t_final = 3
+T_step = 2/3
 L_proposer = 3000
 L_step = 3000
 L_block = 30000
@@ -29,11 +30,11 @@ ctx = {
 # Network setup
 
 while (not G) or (not nx.is_connected(G)):
-    z = np.random.uniform(4,9,N) # create degree sequence of N nodes uniformly distributed among{4,5,...,8}
+    z = np.random.uniform(2,5,N) # create degree sequence of N nodes uniformly distributed among{4,5,...,8}
     z = list(map(int, z)) # Convert to integers as the above produces floats
     # It's possible that degree sequence adds up to odd number, so the following statement make sets the first number of 5 if it's even and 6 otherwise
     if sum(z) %2 !=0:
-        z[0] = 5 if z[0]%2 ==0 else 6
+        z[0] = 3 if z[0]%2 ==0 else 4
     G = nx.configuration_model(z)  # Create graph from configuration model
 degree_sequence = [d for n, d in G.degree()]  # degree sequence
 
@@ -201,8 +202,8 @@ class Node:
                 event = simpy.events.Timeout(self.env, delay=self.getBlockDelay(neighbour) if is_block else self.getNonBlockDelay(neighbour), value=(self.env, neighbour, message))
                 event.callbacks.append(verifyAndGossip)
         # return env.timeout(timeout)
-    def committeeVote(self, step, value):
-        hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, step, t_step, "committee", self.stake, ctx['W'] )
+    def committeeVote(self, step, t, value):
+        hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, step, t, "committee", self.stake, ctx['W'] )
         if j > 0 :
             print ("%d: %d selected in committee"%(self.env.now, self.id))
             committee_vote_payload = CommitteeVotePayload(str(self.block_pointer.hash()), str(value), self.round, step, j, hash, proof)
@@ -212,29 +213,84 @@ class Node:
     def processMsg(self, t, message):
         if message.payload.prev_block_hash != utils.hashBlock(str(self.block_pointer)):
             return 0, None, None
-        votes = utils.verifySortition(message.pub_key, message.payload.vrf_hash, message.payload.vrf_proof, message.payload.prev_block_hash, message.payload.round, message.payload.step, t, ctx['weight'][message.pub_key], ctx['W'])
+        votes = utils.verifySortition(message.pub_key, message.payload.vrf_hash, message.payload.vrf_proof, message.payload.prev_block_hash, message.payload.round, message.payload.step, t, "committee", ctx['weight'][str(message.pub_key)], ctx['W'])
         return votes, message.payload.curr_block_hash, message.payload.vrf_hash
 
-    def countVotes(self, step, T, t, L):
+    def countVotes(self, step, T, t):
         self.counts = {}
-        self.voters = {}
+        self.voters = []
         for message in self.votes_heard:
             votes, value, sorthash = self.processMsg(t, message)
-            if message.pub_key in voters or votes == 0:
+            if message.pub_key in self.voters or votes == 0:
                 continue
-            voters.append(message.pub_key)
-            counts[value] = votes if not counts[value] else counts[value] + votes
-            if counts[value] > T * t:
+            self.voters.append(message.pub_key)
+            self.counts[value] = votes if value not in self.counts else self.counts[value] + votes
+            if self.counts[value] > T * t:
                 return value
         return None
+    
+    def byzagreement(self,round,block_hash):
+        step = 3
+        r = block_hash
+        eblock = Block(self.block_pointer.hash(),'Empty')
+        empty_hash = utils.hashBlock(str(eblock))
+        while step < MAX_STEPS :
+            self.committeeVote(step, t_step, r)
+            yield self.env.timeout(L_step)
+            r = self.countVotes(step,T_step,t_step)
+            if r == None :
+                r = block_hash
+            elif r != empty_hash :
+                for s in range(step+1,step+4) :
+                    self.committeeVote(s, t_step, r)
+                if step == 3 :
+                    self.committeeVote("FINAL", t_final, r)
+                return r
+            step += 1
+
+
+            self.committeeVote(step, t_step, r)
+            yield self.env.timeout(L_step)
+            r = self.countVotes(step,T_step,t_step)
+            if r == None :
+                r = block_hash
+            elif r == empty_hash :
+                for s in range(step+1,step+4) :
+                    self.committeeVote(s, t_step, r)
+                return r
+            step += 1
+
+
+
+
+        
 
 
     def reduction(self, hblock):
-        self.committeeVote(3, str(hblock))
+        self.committeeVote(3, t_step, str(hblock))
         self.votes_heard = []
-        yield self.env.timeout(L_step)
-        print ("%d: %d heard %d votes"%(self.env.now, self.id, len(self.votes_heard)))
+        yield self.env.timeout(L_block + L_step)
+        # print ("%d: %d heard %d votes"%(self.env.now, self.id, len(self.votes_heard)))
         # Count received votes
+        hblock1 = self.countVotes(3, T_step, t_step)
+        print("%d: %d got max votes for %s"%(self.env.now,self.id, hblock1))
+        eblock = Block(self.block_pointer.hash(),'Empty')
+        ehash = utils.hashBlock(str(eblock))
+        if hblock1 == None :
+            self.committeeVote(4, t_step,str(ehash))
+        else :
+            self.committeeVote(4, t_step,str(hblock1))
+        yield self.env.timeout(L_step)
+        hblock2 = self.countVotes(4, T_step, t_step)
+        if hblock2 == None :
+            print('%d: %d Result of Reduction is Empty Hash'%(self.env.now,self.id))
+            return ehash
+        else :
+            print('%d: %d Result of Reduction is '%(self.env.now,self.id),hblock2)
+            return hblock2    
+
+
+
 
     def start(self):
         # starts the simulation process for this node
@@ -296,7 +352,7 @@ if __name__ == '__main__' :
         n = Node(i, env)
         nodes.append(n)
         ctx['W'] += n.stake
-        ctx['weight'][n.pub_key] = n.stake 
+        ctx['weight'][str(n.pub_key)] = n.stake 
         # print("%d stake: %d"%(nodes[i].id, nodes[i].stake))
         env.process(nodes[i].start())
     print("Created nodes")

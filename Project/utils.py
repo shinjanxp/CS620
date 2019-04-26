@@ -43,7 +43,7 @@ def generatePRGValue(seed):
     return random.randrange(0,2**256)
 
 def sortition(priv_key,prevBlockHash,roundNo,stepNo,threshold,role,userweight,totalweight):
-    seed = str(prevBlockHash)+str(roundNo)+str(stepNo)
+    seed = str(prevBlockHash)+str(roundNo)+str(stepNo)+str(role)
     message = generatePRGValue(seed)
     signedMessage = signMessage(str(message),priv_key)
     successProb = threshold/totalweight
@@ -56,7 +56,7 @@ def sortition(priv_key,prevBlockHash,roundNo,stepNo,threshold,role,userweight,to
     return int(hashBlock(str(signedMessage)),base=16),signedMessage,j
 
 def verifySortition(pub_key,hash,signedMessage,prevBlockHash,roundNo,stepNo,threshold,role,userweight,totalweight):
-    seed = str(prevBlockHash)+str(roundNo)+str(stepNo)
+    seed = str(prevBlockHash)+str(roundNo)+str(stepNo)+str(role)
     message = generatePRGValue(seed)
     if verifySignature(signedMessage[0],signedMessage[1],str(message),pub_key) :
         successProb = threshold/totalweight
