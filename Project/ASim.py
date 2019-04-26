@@ -14,6 +14,7 @@ t_proposer = 5
 t_step = 32
 t_final = 3
 T_step = 2/3
+T_final = 3/4
 L_proposer = 3000
 L_step = 3000
 L_block = 30000
@@ -229,17 +230,32 @@ class Node:
                 return value
         return None
     
+    def byzagreement(self,round,block):
+        hblock = yield from self.reduction(utils.hashBlock(str(block)))
+        print('%d: %d Result of Reduction is '%(self.env.now,self.id),hblock)
+        hblock1 = yield from self.binarybyzagreement(round,hblock)
+        yield self.env.timeout(L_step)
+        r = self.countVotes('FINAL',T_final,t_final)
+        if hblock1 == r :
+            print('Final consensus is achieved with block ',str(block))
+            return 'FINAL',block
+        else :    
+            print('Tentative consensus is achieved with block ',str(block))
+            return 'TENTATIVE',block
+    
+    
     def commonCoin(self, step, t):
         minhash  = 2**256
         for m in self.votes_heard:
-            votes, value, sorthash = processMsg(t, m)
+            votes, value, sorthash = self.processMsg(t, m)
             for j in range(1, votes):
                 h = int(utils.hashBlock(sorthash + str(j)), base=16)
                 if h < minhash :
                     minhash = h
+        print('Result of Common Coin : ',str(minhash % 2))
         return minhash % 2
          
-    def byzagreement(self,round,block_hash):
+    def binarybyzagreement(self,round,block_hash):
         step = 3
         r = block_hash
         eblock = Block(self.block_pointer.hash(),'Empty')
@@ -285,16 +301,16 @@ class Node:
         self.env.timeout(2**256)
 
     def reduction(self, hblock):
-        self.committeeVote(3, t_step, str(hblock))
         self.votes_heard = []
+        self.committeeVote(3, t_step, str(hblock))
         yield self.env.timeout(L_block + L_step)
         # print ("%d: %d heard %d votes"%(self.env.now, self.id, len(self.votes_heard)))
         # Count received votes
         hblock1 = self.countVotes(3, T_step, t_step)
-        self.votes_heard = []
         print("%d: %d got max votes for %s"%(self.env.now,self.id, hblock1))
         eblock = Block(self.block_pointer.hash(),'Empty')
         ehash = utils.hashBlock(str(eblock))
+        self.votes_heard = []
         if hblock1 == None :
             self.committeeVote(4, t_step,str(ehash))
         else :
@@ -354,7 +370,8 @@ class Node:
         # If they do not hear a Block proposal from the highest priority block-proposer within this period they commit vote for a Empty Block
         else:
             block = Block(self.block_proposal_message_heard.payload.prev_block_hash,"Empty")
-        yield from self.reduction(block.hash())
+        #yield from self.reduction(block.hash())
+        yield from self.byzagreement(self.round,block)
         yield env.timeout(2000)
             
 
