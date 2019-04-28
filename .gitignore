@@ -3,3 +3,5 @@
 */logs/*
 .vscode
 */logs.txt
+logs/
+*.tar.gz
