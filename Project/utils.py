@@ -9,6 +9,8 @@ import sympy
 
 # Used for generating Key Pairs for each node
 # Private keys in ECDSA are integers while Public Key are points on curve P256
+count = 0
+mean_sub_user = [0]*52
 def generateKeys():
     priv_key,pub_key = keys.gen_keypair(curve.P256) # Refer https://safecurves.cr.yp.to/ Options : P256,P224,...
     return priv_key,pub_key
@@ -43,6 +45,8 @@ def generatePRGValue(seed):
     return random.randrange(0,2**256)
 
 def sortition(priv_key,prevBlockHash,roundNo,stepNo,threshold,role,userweight,totalweight):
+    global mean_sub_user
+    global count
     seed = str(prevBlockHash)+str(roundNo)+str(stepNo)+str(role)
     message = generatePRGValue(seed)
     signedMessage = signMessage(str(message),priv_key)
@@ -51,8 +55,10 @@ def sortition(priv_key,prevBlockHash,roundNo,stepNo,threshold,role,userweight,to
     j=0
     v = int(hashBlock(str(signedMessage)),base=16)/2**256 #(sum(signedMessage)%(2**256))/2**256
     # print('v : ',v)
+    count+=1
     while ((v < binomialSum(j,userweight,successProb)) or (v >= binomialSum(j+1,userweight,successProb))) and (j<=userweight) :
         j=j+1
+    mean_sub_user[userweight-1]+=j
     return int(hashBlock(str(signedMessage)),base=16),signedMessage,j
 
 def verifySortition(pub_key,hash,signedMessage,prevBlockHash,roundNo,stepNo,threshold,role,userweight,totalweight):
@@ -94,6 +100,16 @@ def hashBlock(message):
     h = hashlib.sha256()
     h.update(message.encode())
     return h.hexdigest()
+
+def generateRandomBinaryList(fraction,length):
+    x = [0]*length
+    adv = 0
+    while adv != int(fraction*len(x)) :
+        ind = random.randrange(0,length)
+        if x[ind] == 0 :
+            x[ind] = 1
+            adv += 1
+    return x
 
 # For testing Purpose Only
 

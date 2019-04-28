@@ -3,11 +3,14 @@ import random, simpy
 import utils
 import numpy as np, networkx as nx
 from matplotlib import pyplot as plt
+from multiprocessing import Pool
+import time
 
 # Non-variable parameters
 RANDOM_SEED = 42
 SIM_TIME = 100000
 MAX_STEPS = 10
+MAX_ROUNDS = 64
 N = 256 # We have to simulate a network of N nodes
 
 # Variable parameters
@@ -16,6 +19,7 @@ t_step = 32
 t_final = 3
 T_step = 2/3
 T_final = 3/4
+L_quiscent = 3000
 L_proposer = 3000
 L_step = 3000
 L_block = 30000
@@ -27,6 +31,7 @@ ctx = {
     'W' : 0,
     'weight':{}
 }
+pkiddict = {}
 
 #########################################
 # Network setup
@@ -122,6 +127,7 @@ class PriorityProposalPayload():
         self.proof = proof
         self.sub_user_idx = sub_user_idx
         self.priority = priority
+
     def __str__(self):
         return str(self.round) + str(self.vrf_hash) + str(self.sub_user_idx) + str(self.priority)
 
@@ -155,11 +161,12 @@ class Message:
 
 
 class Block:
-    def __init__(self, prev_block_hash, random_string=str(random.getrandbits(256))):
+    def __init__(self, prev_block_hash, random_string=str(random.getrandbits(256)),prev_block_pointer=None):
         self.prev_block_hash = prev_block_hash
         self.random_string = random_string
+        self.prev_block_pointer = prev_block_pointer
     def __str__(self):
-        return self.prev_block_hash + self.random_string
+        return self.random_string
     def hash(self):
         return utils.hashBlock(str(self))
 
@@ -174,6 +181,7 @@ class GenesisBlock(Block):
 
 class Node:
     def __init__(self, id, env):
+        global pkiddict
         self.id = id
         self.priv_key, self.pub_key = utils.generateKeys()
         self.stake = random.randint(1,50) #Assign random uniform stake
@@ -183,6 +191,7 @@ class Node:
         self.env = env
         # Ref: https://simpy.readthedocs.io/en/latest/examples/process_communication.html
         self.rcv_pipe = simpy.Store(env)
+        pkiddict[str(self.pub_key)] = self.id
 
     def __str__(self):
         return str(self.id)
@@ -231,17 +240,17 @@ class Node:
                 return value
         return None
     
-    def byzagreement(self,round,block):
-        hblock = yield from self.reduction(utils.hashBlock(str(block)))
-        print('%d: %d Result of Reduction is '%(self.env.now,self.id),hblock)
-        hblock1 = yield from self.binarybyzagreement(round,hblock)
+    def byzagreement(self,round,block,t_step):
+        hblock = yield from self.reduction(utils.hashBlock(str(block)),t_step)
+        print('%d: %d Result of Reduction is '%(self.env.now,self.id),hblock,t_step)
+        hblock1 = yield from self.binarybyzagreement(round,hblock,t_step)
         yield self.env.timeout(L_step)
         r = self.countVotes('FINAL',T_final,t_final)
         if hblock1 == r :
-            print('Final consensus is achieved with block ',str(block))
+            print('%d:Final consensus is achieved with block '%(self.env.now),str(block))
             return 'FINAL',block
         else :    
-            print('Tentative consensus is achieved with block ',str(block))
+            print('%d:Tentative consensus is achieved with block '%(self.env.now),str(block))
             return 'TENTATIVE',block
     
     
@@ -250,16 +259,16 @@ class Node:
         for m in self.votes_heard:
             votes, value, sorthash = self.processMsg(t, m)
             for j in range(1, votes):
-                h = int(utils.hashBlock(sorthash + str(j)), base=16)
+                h = int(utils.hashBlock(str(sorthash) + str(j)), base=16)
                 if h < minhash :
                     minhash = h
         print('Result of Common Coin : ',str(minhash % 2))
         return minhash % 2
          
-    def binarybyzagreement(self,round,block_hash):
+    def binarybyzagreement(self,round,block_hash,t_step):
         step = 3
         r = block_hash
-        eblock = Block(self.block_pointer.hash(),'Empty')
+        eblock = Block(self.block_pointer.hash(),'Empty',self.block_pointer)
         empty_hash = utils.hashBlock(str(eblock))
         while step < MAX_STEPS :
             self.committeeVote(step, t_step, r)
@@ -295,13 +304,13 @@ class Node:
                 else:
                     r = empty_hash
             step += 1
-        self.hashForever()
+        self.hangForever()
 
     def hangForever(self):
         print("%d: Winter is here for %d"%(self.env.now, self.id))
         self.env.timeout(2**256)
 
-    def reduction(self, hblock):
+    def reduction(self, hblock,t_step):
         self.votes_heard = []
         self.committeeVote(3, t_step, str(hblock))
         yield self.env.timeout(L_block + L_step)
@@ -309,7 +318,7 @@ class Node:
         # Count received votes
         hblock1 = self.countVotes(3, T_step, t_step)
         print("%d: %d got max votes for %s"%(self.env.now,self.id, hblock1))
-        eblock = Block(self.block_pointer.hash(),'Empty')
+        eblock = Block(self.block_pointer.hash(),'Empty',self.block_pointer)
         ehash = utils.hashBlock(str(eblock))
         self.votes_heard = []
         if hblock1 == None :
@@ -330,61 +339,77 @@ class Node:
 
 
 
-    def start(self):
+    def start(self, t_step,fault_flag):
         # starts the simulation process for this node
-
-        self.block_proposal_message_heard = None
-        self.messages_seen = []
-        self.is_block_proposer = False
-        self.is_committee_member = False
-        # 1. After consensus on a block in the previous round, each node queries PRG
-        # 2. With the output of the PRG and τ proposer = 20, each node should check whether it has been selected as a block proposer or not
-        hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, 0, t_proposer, None, self.stake, ctx['W'] )
-        message = None
-        if j > 0:
-            print("%d: %d selected as priority proposer"%(self.env.now,self.id))
-            # 3. In case a node is selected as a block proposer, compute priority for each of the selected sub-user.
-            priority = utils.evaluatePriority(str(hash), j)
-    
-            # 4. After computing priority, gossip a message with the highest priority sub-user information.
-            priority_proposal_payload = PriorityProposalPayload(self.round, hash, proof, j, priority)
-            message = Message(priority_proposal_payload, self.priv_key, self.pub_key)
-            self.max_priority_proposal_message = message
-
-            # 5. Each proposer node will then wait for time λ proposer = 3 seconds to hear priorities broadcast by other proposer nodes of the network.
-            self.gossip(message, False)
-        yield self.env.timeout(L_proposer)
-
-        # 6. The node with the highest priority creates a block proposal and broadcast it to the network.
-        if self.max_priority_proposal_message and self.max_priority_proposal_message.pub_key == self.pub_key :
-            self.is_block_proposer = True
-            print("%d: %d selected as highest priority block proposer"%(self.env.now,self.id))
-            block_proposal_payload = BlockProposalPayload(self.block_pointer.hash(), self.max_priority_proposal_message.payload, self.stake)
-            message = Message(block_proposal_payload, self.priv_key, self.pub_key)
-            self.gossip(message, True)
-
-        yield self.env.timeout(L_step)
-        # print ("%d: %d heard block_proposal_message %s"%(self.env.now, self.id, str(self.block_proposal_message_heard.payload)))
-
-        if self.block_proposal_message_heard:
-            block = Block(self.block_proposal_message_heard.payload.prev_block_hash, self.block_proposal_message_heard.payload.random_string)
-        # If they do not hear a Block proposal from the highest priority block-proposer within this period they commit vote for a Empty Block
-        else:
-            block = Block(self.block_proposal_message_heard.payload.prev_block_hash,"Empty")
-        #yield from self.reduction(block.hash())
-        yield from self.byzagreement(self.round,block)
-        yield env.timeout(2000)
+        global emptyblock
+        while self.round < MAX_ROUNDS:
+            self.block_proposal_message_heard = None
+            self.messages_seen = []
+            self.is_block_proposer = False
+            self.is_committee_member = False
+            # 1. After consensus on a block in the previous round, each node queries PRG
+            # 2. With the output of the PRG and τ proposer = 20, each node should check whether it has been selected as a block proposer or not
+            hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, 0, t_proposer, None, self.stake, ctx['W'] )
+            message = None
+            if j > 0:
+                print("%d: %d selected as priority proposer"%(self.env.now,self.id))
+                # 3. In case a node is selected as a block proposer, compute priority for each of the selected sub-user.
+                priority = utils.evaluatePriority(str(hash), j)
         
+                # 4. After computing priority, gossip a message with the highest priority sub-user information.
+                priority_proposal_payload = PriorityProposalPayload(self.round, hash, proof, j, priority)
+                message = Message(priority_proposal_payload, self.priv_key, self.pub_key)
+                self.max_priority_proposal_message = message
 
+                # 5. Each proposer node will then wait for time λ proposer = 3 seconds to hear priorities broadcast by other proposer nodes of the network.
+                self.gossip(message, False)
+            yield self.env.timeout(L_proposer)
 
+            # 6. The node with the highest priority creates a block proposal and broadcast it to the network.
+            if self.max_priority_proposal_message and self.max_priority_proposal_message.pub_key == self.pub_key :
+                self.is_block_proposer = True
+                print("%d: %d selected as highest priority block proposer"%(self.env.now,self.id))
+                
+                if fault_flag[self.id] != 1 :
+                    block_proposal_payload = BlockProposalPayload(self.block_pointer.hash(), self.max_priority_proposal_message.payload, self.stake)
+                    message = Message(block_proposal_payload, self.priv_key, self.pub_key)
+                    self.gossip(message, True)
+
+            yield self.env.timeout(L_step)
+            #print ("%d: %d heard block_proposal_message %s"%(self.env.now, self.id, str(self.block_proposal_message_heard.payload)))
+
+            if self.block_proposal_message_heard:
+                block = Block(self.block_proposal_message_heard.payload.prev_block_hash, self.block_proposal_message_heard.payload.random_string,self.block_pointer)
+            # If they do not hear a Block proposal from the highest priority block-proposer within this period they commit vote for a Empty Block
+            else:
+                block = Block(self.block_pointer.hash(),"Empty",self.block_pointer)
+            #yield from self.reduction(block.hash())
+            if block.random_string == 'Empty':
+                emptyblock+=1
+            new_block_pointer = yield from self.byzagreement(self.round,block,t_step)
+            self.block_pointer = new_block_pointer[1]
+            yield self.env.timeout(2000)
+            print('Block No. %d is created'%(self.round+1))
+            print('Blockchain Traversal')
+            self.traverseBlockchain(self.round+1)
+            self.round += 1
+            
             
 
-#########################################
-# Setup nodes 
+    def traverseBlockchain(self,round):
+        tmp = self.block_pointer
+        while tmp :
+            print('Block No. %d : %s'%(round,str(tmp)))
+            if type(tmp) != type(GenesisBlock()) :
+                tmp = tmp.prev_block_pointer
+            else :
+                tmp = None
+            round-=1
 
-nodes = []
-if __name__ == '__main__' :
-    
+            
+        
+def simulate(t_step,fault_flag):
+
     #########################################
     # Create an environment and start the setup process
     print('Algorand Simulator')
@@ -395,28 +420,31 @@ if __name__ == '__main__' :
         nodes.append(n)
         ctx['W'] += n.stake
         ctx['weight'][str(n.pub_key)] = n.stake 
-        # print("%d stake: %d"%(nodes[i].id, nodes[i].stake))
-        env.process(nodes[i].start())
+        #print("%d stake: %d"%(nodes[i].id, nodes[i].stake))
+        env.process(nodes[i].start(t_step,fault_flag))
     print("Created nodes")
-    # For one-to-one or many-to-one type pipes, use Store
-    # for n in nodes[0].getNeighbourIds():
-    #     env.process(nodes[n].broadcast("Yo from %d"%(n), True))
-    # env.process(nodes[0].receive(3000))
-    # print(nodes[0].getNeighbourIds())
-    # b = PriorityProposalPayload(1,2,3,4)
-    # m = Message(b, nodes[0].priv_key, nodes[0].pub_key)
-    # env.process(nodes[0].gossip(m, True, 3000))
 
-    env.run(until=SIM_TIME)
-    # t1 = Txn(1, 2, 10)
-    # t2 = Txn(2, 3, 15)
-    # t3 = Txn(4, 3, 12)
-    # g = GenesisBlock()
-    # print(g)
-    # b = Block(g, [t1,t2,t3])
-    # print(b)
-    mean_stakes,count = utils.avg_sub_users,utils.count
+    env.run(until=SIM_TIME*64)
+    print('End of Simulation')
+    
+
+    
+        
+            
+
+#########################################
+# Setup nodes 
+
+nodes = []
+fault_flag = [0]*256
+emptyblock = 0
+if __name__ == '__main__' :
+    fraction = 0.5
+    fault_flag = utils.generateRandomBinaryList(fraction,256)
+    simulate(32,fault_flag)
+    mean_stakes,count = utils.mean_sub_user,utils.count
     mean_stakes = [a/count for a in mean_stakes]
     plt.title('Stakes vs Mean Sub Users selected')
-    plt.plot(list(range(1,52)),mean_stakes)
+    plt.plot(list(range(52)),mean_stakes)
     plt.show()
+    print('Number of Empty Blocks = ',emptyblock/256)
