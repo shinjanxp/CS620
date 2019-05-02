@@ -19,7 +19,7 @@ t_final = 3
 T_step = 2/3
 T_final = 3/4
 L_quiscent = 3000
-L_proposer = 100
+L_proposer = 3000
 L_step = 3000
 L_block = 30000
 
@@ -51,7 +51,7 @@ edges =list(G.edges)
 block_delay = {}
 block_delay_distribution = list(np.random.normal(200, 400, G.number_of_edges()))
 non_block_delay = {}
-non_block_delay_distribution = list(np.random.normal(40, 64, G.number_of_edges()))
+non_block_delay_distribution = list(np.random.normal(30, 64, G.number_of_edges()))
 
 for e in edges:
     block_delay[e] = max(0, block_delay_distribution.pop())
@@ -129,7 +129,7 @@ class PriorityProposalPayload():
         self.priority = priority
 
     def __str__(self):
-        return str(self.round) + str(self.vrf_hash) + str(self.sub_user_idx) + str(self.priority)
+        return str(self.round) +","+ str(self.vrf_hash) +","+ str(self.sub_user_idx) +","+ str(self.priority)
 
 class BlockProposalPayload():
     def __init__(self, prev_block_hash, priority_proposal_payload, stake):
@@ -138,7 +138,7 @@ class BlockProposalPayload():
         self.priority_proposal_payload = priority_proposal_payload
         self.stake = stake
     def __str__(self):
-        return str(self.prev_block_hash) + str(self.random_string) + str(self.priority_proposal_payload)
+        return str(self.prev_block_hash) +","+ str(self.random_string) +","+ str(self.priority_proposal_payload)
 
 class CommitteeVotePayload():
     def __init__(self, prev_block_hash, curr_block_hash, round, step, j, vrf_hash, vrf_proof):
@@ -186,13 +186,14 @@ class Node:
         self.priv_key, self.pub_key = utils.generateKeys()
         self.stake = random.randint(1,50) #Assign random uniform stake
         self.block_pointer = GenesisBlock()
-        self.round = 0
+        self.round = 1
         self.max_priority_proposal_message = None
         self.env = env
         # Ref: https://simpy.readthedocs.io/en/latest/examples/process_communication.html
         self.rcv_pipe = simpy.Store(env)
         pkiddict[str(self.pub_key)] = self.id
         self.logfile = open("./logs/"+str(self.id)+".log", 'w+')
+        self.logfile.write("Adjacency list: " + str(self.getNeighbourIds()) + "\n")
 
     def __str__(self):
         return str(self.id)
@@ -219,7 +220,7 @@ class Node:
         # return env.timeout(timeout)
     def committeeVote(self, step, t, value):
         hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, step, t, "committee", self.stake, ctx['W'] )
-        self.log("%d: Sortition hash, proof, j: %s, %s, %d"%(self.env.now, str(hash), str(proof), str(j)))
+        self.log("%d: Sortition hash, proof, j: %s, %s, %s\n"%(self.env.now, str(hash), str(proof), str(j)))
         if j > 0 :
             self.log ("%d: %d selected in committee\n"%(self.env.now, self.id))
             committee_vote_payload = CommitteeVotePayload(str(self.block_pointer.hash()), str(value), self.round, step, j, hash, proof)
@@ -235,6 +236,7 @@ class Node:
     def countVotes(self, step, T, t):
         self.counts = {}
         self.voters = []
+        self.log("Votes heard for block:\n")
         for message in self.votes_heard:
             votes, value, sorthash = self.processMsg(t, message)
             if message.pub_key in self.voters or votes == 0:
@@ -242,20 +244,22 @@ class Node:
             self.voters.append(message.pub_key)
             self.counts[value] = votes if value not in self.counts else self.counts[value] + votes
             if self.counts[value] > T * t:
+                self.log(str(self.counts) + "\n")
                 return value
+        self.log(str(self.counts) + "\n")
         return None
     
     def byzagreement(self,round,block,t_step):
         hblock = yield from self.reduction(utils.hashBlock(str(block)),t_step)
-        self.log('%d: %d Result of Reduction is %s, %d\n'%(self.env.now,self.id,str(hblock),t_step))
+        self.log('%d: Result of Reduction is %s, %d\n'%(self.env.now,str(hblock),t_step))
         hblock1 = yield from self.binarybyzagreement(round,hblock,t_step)
         yield self.env.timeout(L_step)
         r = self.countVotes('FINAL',T_final,t_final)
         if hblock1 == r :
-            self.log('%d:Final consensus is achieved with block %s\n'%(self.env.now,str(block)))
+            self.log('%d: Final consensus is achieved with block %s\n'%(self.env.now,str(block)))
             return 'FINAL',block
         else :    
-            self.log('%d:Tentative consensus is achieved with block %s\n'%(self.env.now,str(block)))
+            self.log('%d: Tentative consensus is achieved with block %s\n'%(self.env.now,str(block)))
             return 'TENTATIVE',block
     
     
@@ -318,11 +322,11 @@ class Node:
     def reduction(self, hblock,t_step):
         self.votes_heard = []
         self.committeeVote(3, t_step, str(hblock))
-        yield self.env.timeout(L_block + L_step)
+        yield self.env.timeout(L_step)
         # self.log ("%d: %d heard %d votes\n"%(self.env.now, self.id, len(self.votes_heard)))
         # Count received votes
         hblock1 = self.countVotes(3, T_step, t_step)
-        self.log("%d: %d got max votes for %s\n"%(self.env.now,self.id, hblock1))
+        self.log("%d: got max votes for %s\n"%(self.env.now, hblock1))
         eblock = Block(self.block_pointer.hash(),'Empty',self.block_pointer)
         ehash = utils.hashBlock(str(eblock))
         self.votes_heard = []
@@ -335,16 +339,16 @@ class Node:
         self.votes_heard = []
     
         if hblock2 == None :
-            self.log('%d: %d Result of Reduction is Empty Hash\n'%(self.env.now,self.id))
+            self.log('%d: Result of Reduction is Empty Hash\n'%(self.env.now))
             return ehash
         else :
-            self.log('%d: %d Result of Reduction is \n'%(self.env.now,self.id),hblock2)
+            self.log('%d: Result of Reduction is %s\n'%(self.env.now,hblock2))
             return hblock2    
 
     def start(self, t_step,fault_flag):
         # starts the simulation process for this node
         self.emptyblocks = 0
-        while self.round < MAX_ROUNDS:
+        while self.round <= MAX_ROUNDS:
             self.block_proposal_message_heard = None
             self.priority_proposal_messages_heard = []
             self.messages_seen = []
@@ -355,10 +359,10 @@ class Node:
             # 1. After consensus on a block in the previous round, each node queries PRG
             # 2. With the output of the PRG and τ proposer = 20, each node should check whether it has been selected as a block proposer or not
             hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, 0, t_proposer, None, self.stake, ctx['W'] )
-            self.log("%d: Sortition hash, proof, j: %s, %s, %d"%(self.env.now, str(hash), str(proof), str(j)))
+            self.log("%d: Sortition hash, proof, j: %s, %s, %s\n"%(self.env.now, str(hash), str(proof), str(j)))
             message = None
             if j > 0:
-                self.log("%d: %d selected as priority proposer\n"%(self.env.now,self.id))
+                self.log("%d: selected as priority proposer\n"%(self.env.now))
                 # 3. In case a node is selected as a block proposer, compute priority for each of the selected sub-user.
                 priority = utils.evaluatePriority(str(hash), j)
         
@@ -370,7 +374,7 @@ class Node:
                 # 5. Each proposer node will then wait for time λ proposer = 3 seconds to hear priorities broadcast by other proposer nodes of the network.
                 self.gossip(message, False)
             yield self.env.timeout(L_proposer)
-            # If selected as priority proposal, need to measur stuff for 2.2. Comment out after use
+            # If selected as priority proposal, need to measure stuff for 2.2. Comment out after use
             if j>0:
                 proposer_count[pkiddict[str(self.max_priority_proposal_message.pub_key)]] = 1 if pkiddict[str(self.max_priority_proposal_message.pub_key)] not in proposer_count else proposer_count[pkiddict[str(self.max_priority_proposal_message.pub_key)]] +1
             yield self.env.timeout(1)
@@ -380,7 +384,7 @@ class Node:
                 self.log(str(item.payload)+"\n")
 
             # Experiment 2.3 Fail stop adversary fails now
-            if fault_flag[self.id] != 1 :
+            if fault_flag[self.id] == 1 :
                 self.faulted = True
             # 6. The node with the highest priority creates a block proposal and broadcast it to the network.
             if self.max_priority_proposal_message and self.max_priority_proposal_message.pub_key == self.pub_key :
@@ -393,12 +397,15 @@ class Node:
                 # plt.show()
                 self.is_block_proposer = True
                 self.log("%d: %d selected as highest priority block proposer\n"%(self.env.now,self.id))
+                print("%d: %d selected as highest priority block proposer\n"%(self.env.now,self.id))
    
                 block_proposal_payload = BlockProposalPayload(self.block_pointer.hash(), self.max_priority_proposal_message.payload, self.stake)
+                # print("%d: %d Proposing block %s\n"%(self.env.now,self.id, str(block_proposal_payload)))
                 message = Message(block_proposal_payload, self.priv_key, self.pub_key)
+                self.block_proposal_message_heard = message
                 self.gossip(message, True)
 
-            yield self.env.timeout(L_step)
+            yield self.env.timeout(L_block)
             #self.log ("%d: %d heard block_proposal_message %s\n"%(self.env.now, self.id, str(self.block_proposal_message_heard.payload)))
 
             if self.block_proposal_message_heard:
@@ -407,15 +414,17 @@ class Node:
             else:
                 block = Block(self.block_pointer.hash(),"Empty",self.block_pointer)
             #yield from self.reduction(block.hash())
+            self.log("%d: Got highest priority proposed block %s\n"%(self.env.now, str(block)))
+
 
             new_block_pointer = yield from self.byzagreement(self.round,block,t_step)
             self.block_pointer = new_block_pointer[1]
             if self.block_pointer.random_string == 'Empty':
                 self.emptyblocks+=1
             yield self.env.timeout(2000)
-            self.log('Block No. %d is created\n'%(self.round+1))
+            self.log('Block No. %d is created\n'%(self.round))
             self.log('Blockchain Traversal\n')
-            self.traverseBlockchain(self.round+1)
+            self.traverseBlockchain(self.round)
             self.round += 1  
         self.logfile.close()          
 
@@ -466,7 +475,7 @@ nodes = []
 fault_flag = [0]*256
 emptyblock = 0
 if __name__ == '__main__' :
-    fraction = 0.5
+    fraction = 0
     fault_flag = utils.generateRandomBinaryList(fraction,256)
     simulate(32,fault_flag)
     mean_stakes,count = utils.mean_sub_user,utils.count
