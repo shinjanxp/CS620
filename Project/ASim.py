@@ -32,6 +32,11 @@ ctx = {
 }
 pkiddict = {}
 proposer_count = {}
+
+nodes = []
+fault_flag = [0]*256
+byzantine = True
+emptyblock = 0
 #########################################
 # Network setup
 
@@ -87,6 +92,9 @@ def verifyAndGossipBlockProposal(env, node, message):
         return None
     # Check whether proposal is coming from highest priority proposer
     if node.max_priority_proposal_message and not node.max_priority_proposal_message.pub_key == message.pub_key:
+        return None
+    if byzantine and node.faulted and node.block_proposal_message_heard.payload.random_string != message.payload.random_string:
+        # Byzantine nodes only propagate their chosen block and drops others
         return None
     node.block_proposal_message_heard = message
     # relay this message
@@ -212,11 +220,12 @@ class Node:
 
     def gossip(self, message, is_block):
         # Message = <Payload||Public Key|| Meta data for Signature verification>
-        if message and not self.faulted:
-            for neighbour in self.getNeighbourIds():
-                # self.log("%d neighbour %d\n"%(self.id, neighbour))
-                event = simpy.events.Timeout(self.env, delay=self.getBlockDelay(neighbour) if is_block else self.getNonBlockDelay(neighbour), value=(self.env, neighbour, message))
-                event.callbacks.append(verifyAndGossip)
+        if not message or (not byzantine and self.faulted):
+            return None
+        for neighbour in self.getNeighbourIds():
+            # self.log("%d neighbour %d\n"%(self.id, neighbour))
+            event = simpy.events.Timeout(self.env, delay=self.getBlockDelay(neighbour) if is_block else self.getNonBlockDelay(neighbour), value=(self.env, neighbour, message))
+            event.callbacks.append(verifyAndGossip)
         # return env.timeout(timeout)
     def committeeVote(self, step, t, value):
         hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, step, t, "committee", self.stake, ctx['W'] )
@@ -383,7 +392,7 @@ class Node:
             for item in self.priority_proposal_messages_heard:
                 self.log(str(item.payload)+"\n")
 
-            # Experiment 2.3 Fail stop adversary fails now
+            # Experiment 2.3/2.4  adversary starts behaving adversarial now
             if fault_flag[self.id] == 1 :
                 self.faulted = True
             # 6. The node with the highest priority creates a block proposal and broadcast it to the network.
@@ -404,6 +413,24 @@ class Node:
                 message = Message(block_proposal_payload, self.priv_key, self.pub_key)
                 self.block_proposal_message_heard = message
                 self.gossip(message, True)
+
+                if byzantine:
+                    #### Byzantine behaviour. Creates 2nd block and gossips
+                    block_proposal_payload_2 = BlockProposalPayload(self.block_pointer.hash(), self.max_priority_proposal_message.payload, self.stake)
+                    message_2 = Message(block_proposal_payload_2, self.priv_key, self.pub_key)
+                    self.gossip(message_2, True)
+
+                    # magically transmits its blocks to all other adversarial node immediately
+                    for n in nodes:
+                        if n.faulted:
+                            if random.randrange(0,2):
+                                # choose 1st block
+                                n.block_proposal_message_heard = message
+                                n.gossip(message, True)
+                            else:
+                                # choose 2nd block
+                                n.block_proposal_message_heard = message_2
+                                n.gossip(message_2, True)
 
             yield self.env.timeout(L_block)
             #self.log ("%d: %d heard block_proposal_message %s\n"%(self.env.now, self.id, str(self.block_proposal_message_heard.payload)))
@@ -458,7 +485,7 @@ def simulate(t_step,fault_flag):
 
     env.run(until=SIM_TIME*64)
     for i in range(N):
-        if fault_flag[i] == 1:
+        if fault_flag[i] == 0:
             print('Number of Empty Blocks = ',nodes[i].emptyblocks)
             break
     print('End of Simulation')
@@ -471,9 +498,6 @@ def simulate(t_step,fault_flag):
 #########################################
 # Setup nodes 
 
-nodes = []
-fault_flag = [0]*256
-emptyblock = 0
 if __name__ == '__main__' :
     fraction = 0
     fault_flag = utils.generateRandomBinaryList(fraction,256)
