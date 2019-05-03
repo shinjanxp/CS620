@@ -436,7 +436,11 @@ class Node:
             #self.log ("%d: %d heard block_proposal_message %s\n"%(self.env.now, self.id, str(self.block_proposal_message_heard.payload)))
 
             if self.block_proposal_message_heard:
-                block = Block(self.block_proposal_message_heard.payload.prev_block_hash, self.block_proposal_message_heard.payload.random_string,self.block_pointer)
+                # Byzantine Adversary drops message if it is from honest node
+                if fault_flag[pkiddict[str(self.block_proposal_message_heard.pub_key)]] != 1 and self.faulted:
+                    pass
+                else :    
+                    block = Block(self.block_proposal_message_heard.payload.prev_block_hash, self.block_proposal_message_heard.payload.random_string,self.block_pointer)
             # If they do not hear a Block proposal from the highest priority block-proposer within this period they commit vote for a Empty Block
             else:
                 block = Block(self.block_pointer.hash(),"Empty",self.block_pointer)
