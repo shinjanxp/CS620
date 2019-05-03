@@ -9,13 +9,13 @@ import time
 RANDOM_SEED = 42
 SIM_TIME = 100000
 MAX_STEPS = 10
-MAX_ROUNDS = 2
+MAX_ROUNDS = 64
 N = 256 # We have to simulate a network of N nodes
 
 # Variable parameters
-t_proposer = 15
+t_proposer = 5
 t_step = 32
-t_final = 3
+t_final = 32
 T_step = 2/3
 T_final = 3/4
 L_quiscent = 3000
@@ -35,7 +35,7 @@ proposer_count = {}
 
 nodes = []
 fault_flag = [0]*256
-byzantine = True
+byzantine = False
 emptyblock = 0
 #########################################
 # Network setup
@@ -483,7 +483,7 @@ def simulate(t_step,fault_flag):
         env.process(nodes[i].start(t_step,fault_flag))
     print("Created nodes")
 
-    env.run(until=SIM_TIME*64)
+    env.run(until=SIM_TIME*MAX_ROUNDS)
     for i in range(N):
         if fault_flag[i] == 0:
             print('Number of Empty Blocks = ',nodes[i].emptyblocks)
@@ -499,7 +499,7 @@ def simulate(t_step,fault_flag):
 # Setup nodes 
 
 if __name__ == '__main__' :
-    fraction = 0
+    fraction = 0.5
     fault_flag = utils.generateRandomBinaryList(fraction,256)
     simulate(32,fault_flag)
     mean_stakes,count = utils.mean_sub_user,utils.count
