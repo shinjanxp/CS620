@@ -9,19 +9,20 @@ import time
 RANDOM_SEED = 42
 SIM_TIME = 100000
 MAX_STEPS = 10
-MAX_ROUNDS = 64
+MAX_ROUNDS = 2
 N = 256 # We have to simulate a network of N nodes
 
 # Variable parameters
 t_proposer = 5
 t_step = 32
-t_final = 32
+t_final = 3
 T_step = 2/3
 T_final = 3/4
 L_quiscent = 3000
 L_proposer = 3000
 L_step = 3000
 L_block = 30000
+fraction = 0.5
 
 # Global initializations
 G = None
@@ -35,7 +36,7 @@ proposer_count = {}
 
 nodes = []
 fault_flag = [0]*256
-byzantine = False
+byzantine = True
 emptyblock = 0
 #########################################
 # Network setup
@@ -93,7 +94,7 @@ def verifyAndGossipBlockProposal(env, node, message):
     # Check whether proposal is coming from highest priority proposer
     if node.max_priority_proposal_message and not node.max_priority_proposal_message.pub_key == message.pub_key:
         return None
-    if byzantine and node.faulted and node.block_proposal_message_heard.payload.random_string != message.payload.random_string:
+    if byzantine and node.faulted and node.block_proposal_message_heard and node.block_proposal_message_heard.payload.random_string != message.payload.random_string:
         # Byzantine nodes only propagate their chosen block and drops others
         return None
     node.block_proposal_message_heard = message
@@ -103,6 +104,10 @@ def verifyAndGossipBlockProposal(env, node, message):
         event.callbacks.append(verifyAndGossip)
  
 def verifyAndGossipCommitteeVote(env, node, message):
+    # for all the honest committee votes, an adversarial node only relay votes for the block it gossiped during block proposal
+    if byzantine and node.faulted and len(node.adversarial_block_messages_heard)>0 and not nodes[pkiddict[str(message.pub_key)]].faulted:
+        if message.payload.curr_block_hash != node.block_chosen.hash():
+            return None
     node.votes_heard.append(message)
     # relay this message
     for neighbour in node.getNeighbourIds():
@@ -200,9 +205,9 @@ class Node:
         # Ref: https://simpy.readthedocs.io/en/latest/examples/process_communication.html
         self.rcv_pipe = simpy.Store(env)
         pkiddict[str(self.pub_key)] = self.id
-        self.logfile = open("./logs/"+str(self.id)+".log", 'w+')
-        self.logfile.write("Adjacency list: " + str(self.getNeighbourIds()) + "\n")
-
+        self.logfile = open("./logs/"+str(self.id)+".log", 'a+')
+        self.log("Adjacency list: " + str(self.getNeighbourIds()) + "\n")
+        self.logfile.close()
     def __str__(self):
         return str(self.id)
     
@@ -221,6 +226,7 @@ class Node:
     def gossip(self, message, is_block):
         # Message = <Payload||Public Key|| Meta data for Signature verification>
         if not message or (not byzantine and self.faulted):
+            print("not gossiping")
             return None
         for neighbour in self.getNeighbourIds():
             # self.log("%d neighbour %d\n"%(self.id, neighbour))
@@ -231,7 +237,13 @@ class Node:
         hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, step, t, "committee", self.stake, ctx['W'] )
         self.log("%d: Sortition hash, proof, j: %s, %s, %s\n"%(self.env.now, str(hash), str(proof), str(j)))
         if j > 0 :
-            self.log ("%d: %d selected in committee\n"%(self.env.now, self.id))
+            self.log ("%d: selected in committee\n"%(self.env.now))
+            if byzantine and self.faulted:
+                # Byzantine nodes vote for both blocks and propagate to neighbours
+                for i in self.adversarial_blocks:
+                    committee_vote_payload = CommitteeVotePayload(str(self.block_pointer.hash()), str(i.hash()), self.round, step, j, hash, proof)
+                    message = Message(committee_vote_payload, self.priv_key, self.pub_key)
+                    self.gossip(message, False)
             committee_vote_payload = CommitteeVotePayload(str(self.block_pointer.hash()), str(value), self.round, step, j, hash, proof)
             message = Message(committee_vote_payload, self.priv_key, self.pub_key)
             self.gossip(message, False)
@@ -365,6 +377,9 @@ class Node:
             self.is_block_proposer = False
             self.is_committee_member = False
             self.faulted = False
+            self.logfile = open("./logs/"+str(self.id)+".log", 'a+')
+            self.adversarial_block_messages_heard = []
+            self.adversarial_blocks = []
             # 1. After consensus on a block in the previous round, each node queries PRG
             # 2. With the output of the PRG and τ proposer = 20, each node should check whether it has been selected as a block proposer or not
             hash, proof, j = utils.sortition(self.priv_key, str(self.block_pointer.hash()), self.round, 0, t_proposer, None, self.stake, ctx['W'] )
@@ -414,21 +429,24 @@ class Node:
                 self.block_proposal_message_heard = message
                 self.gossip(message, True)
 
-                if byzantine:
+                if byzantine and self.faulted:
+                    print("%d: %d is byzantine 👿 \n"%(self.env.now,self.id))
                     #### Byzantine behaviour. Creates 2nd block and gossips
                     block_proposal_payload_2 = BlockProposalPayload(self.block_pointer.hash(), self.max_priority_proposal_message.payload, self.stake)
                     message_2 = Message(block_proposal_payload_2, self.priv_key, self.pub_key)
                     self.gossip(message_2, True)
 
-                    # magically transmits its blocks to all other adversarial node immediately
+                    # magically transmits its blocks to all other adversarial node immediately. But adds both adversarial blocks to their heard lists
                     for n in nodes:
                         if n.faulted:
-                            if random.randrange(0,2):
+                            if random.randrange(0,2)==1:
                                 # choose 1st block
                                 n.block_proposal_message_heard = message
+                                n.adversarial_block_messages_heard.append(message)
                                 n.gossip(message, True)
                             else:
                                 # choose 2nd block
+                                n.adversarial_block_messages_heard.append(message_2)
                                 n.block_proposal_message_heard = message_2
                                 n.gossip(message_2, True)
 
@@ -437,12 +455,17 @@ class Node:
 
             if self.block_proposal_message_heard: 
                 block = Block(self.block_proposal_message_heard.payload.prev_block_hash, self.block_proposal_message_heard.payload.random_string,self.block_pointer)
+            
+                # Byzantine nodes create all blocks to be used in committeeVote
+                if byzantine and self.faulted:
+                    for i in self.adversarial_block_messages_heard:
+                        self.adversarial_blocks.append(Block(i.payload.prev_block_hash, i.payload.random_string,self.block_pointer))
             # If they do not hear a Block proposal from the highest priority block-proposer within this period they commit vote for a Empty Block
             else:
                 block = Block(self.block_pointer.hash(),"Empty",self.block_pointer)
             #yield from self.reduction(block.hash())
             self.log("%d: Got highest priority proposed block %s\n"%(self.env.now, str(block)))
-
+            self.block_chosen = block                
 
             new_block_pointer = yield from self.byzagreement(self.round,block,t_step)
             self.block_pointer = new_block_pointer[1]
@@ -453,7 +476,7 @@ class Node:
             self.log('Blockchain Traversal\n')
             self.traverseBlockchain(self.round)
             self.round += 1  
-        self.logfile.close()          
+            self.logfile.close()        
 
     def traverseBlockchain(self,round):
         tmp = self.block_pointer
@@ -499,7 +522,7 @@ def simulate(t_step,fault_flag):
 # Setup nodes 
 
 if __name__ == '__main__' :
-    fraction = 0.5
+fraction = 0.5
     fault_flag = utils.generateRandomBinaryList(fraction,256)
     simulate(32,fault_flag)
     mean_stakes,count = utils.mean_sub_user,utils.count
